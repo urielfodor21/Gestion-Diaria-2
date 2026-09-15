@@ -20,6 +20,8 @@ export const SedeSwitcher: React.FC<SedeSwitcherProps> = ({
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [creatingLoading, setCreatingLoading] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const current = sedes.find((s) => s.id === currentSedeId);
 
@@ -30,9 +32,17 @@ export const SedeSwitcher: React.FC<SedeSwitcherProps> = ({
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
-    await onCreateSede(newName.trim());
-    setNewName('');
-    setCreating(false);
+    setCreatingLoading(true);
+    setCreateError(null);
+    try {
+      await onCreateSede(newName.trim());
+      setNewName('');
+      setCreating(false);
+    } catch (err: any) {
+      setCreateError(err?.message || 'No se pudo crear la sede.');
+    } finally {
+      setCreatingLoading(false);
+    }
   };
 
   return (
@@ -74,22 +84,28 @@ export const SedeSwitcher: React.FC<SedeSwitcherProps> = ({
             {canCreateSede && (
               <div className="border-t border-zinc-800 p-2">
                 {creating ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      autoFocus
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                      placeholder="Nombre de la sede"
-                      className="flex-1 px-2 py-1.5 rounded-md bg-zinc-950 border border-zinc-700 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleCreate}
-                      className="px-2 py-1.5 rounded-md bg-yellow-400 text-zinc-950 text-xs font-bold"
-                    >
-                      Crear
-                    </button>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        autoFocus
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+                        placeholder="Nombre de la sede"
+                        className="flex-1 px-2 py-1.5 rounded-md bg-zinc-950 border border-zinc-700 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCreate}
+                        disabled={creatingLoading}
+                        className="px-2 py-1.5 rounded-md bg-yellow-400 text-zinc-950 text-xs font-bold disabled:opacity-60"
+                      >
+                        {creatingLoading ? '...' : 'Crear'}
+                      </button>
+                    </div>
+                    {createError && (
+                      <p className="text-[11px] text-red-400 px-0.5">{createError}</p>
+                    )}
                   </div>
                 ) : (
                   <button
