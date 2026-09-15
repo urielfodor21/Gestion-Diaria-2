@@ -1,4 +1,4 @@
-# Gestión Diaria — Multi-sede con usuarios y roles
+# Gestión Diaria — Multi-sede con usuarios y roles.
 
 App de pizarra de ventas diarias en pesos argentinos ($ ARS), con múltiples
 sedes sincronizadas en tiempo real vía Supabase y usuarios con 4 niveles de
