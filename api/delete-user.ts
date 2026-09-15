@@ -7,12 +7,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  let callerId: string;
   try {
-    const callerId = await requireAdmin(req.headers.authorization);
+    callerId = await requireAdmin(req.headers.authorization);
+  } catch (err: any) {
+    res.status(403).json({ error: err.message || 'No autorizado.' });
+    return;
+  }
 
+  try {
     const { userId } = req.body || {};
     if (!userId) {
-      res.status(400).json({ error: 'Falta userId.' });
+      res.status(400).json({ error: 'Falta el usuario a eliminar.' });
       return;
     }
     if (userId === callerId) {
@@ -21,15 +27,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const admin = getAdminClient();
-    // Borrar el usuario de Auth también elimina su fila en "profiles" (ON DELETE CASCADE)
     const { error } = await admin.auth.admin.deleteUser(userId);
     if (error) {
-      res.status(400).json({ error: error.message });
+      res.status(400).json({ error: error.message || 'No se pudo eliminar el usuario.' });
       return;
     }
 
     res.status(200).json({ ok: true });
   } catch (err: any) {
-    res.status(403).json({ error: err.message || 'Error inesperado.' });
+    res.status(500).json({ error: err.message || 'Error inesperado del servidor.' });
   }
 }
