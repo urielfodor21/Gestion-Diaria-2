@@ -1,0 +1,6 @@
+{
+  "name": "Gestión Diaria",
+  "description": "Pizarra virtual interactiva y matriz de histórico de ventas día a día modificable a mano para gestión y control comercial de ventas en pesos argentinos ($ ARS).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
