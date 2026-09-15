@@ -47,16 +47,39 @@ export async function callAdminApi<T>(path: string, body: unknown): Promise<T> {
   if (!supabase) throw new Error('Supabase no está configurado.');
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
-  if (!token) throw new Error('No hay sesión activa.');
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json?.error || 'Error en el servidor.');
+  if (!token) throw new Error('No hay sesión activa. Volvé a iniciar sesión e intentá de nuevo.');
+
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    // fetch solo falla así por problemas de red/CORS, no por errores del servidor
+    throw new Error('No se pudo conectar con el servidor. Revisá tu conexión e intentá de nuevo.');
+  }
+
+  const rawText = await res.text();
+  let json: any = null;
+  try {
+    json = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    // El servidor no devolvió JSON (por ejemplo, una función que no se desplegó bien
+    // devuelve una página de error de Vercel). Incluimos el status para poder diagnosticar.
+    throw new Error(
+      `El servidor respondió con un formato inesperado (status ${res.status}). ` +
+        `Puede que la función /api no se haya desplegado correctamente — revisá Vercel → Deployments → Functions → Logs.`
+    );
+  }
+
+  if (!res.ok) {
+    throw new Error(json?.error || `Error del servidor (status ${res.status}).`);
+  }
+
   return json as T;
 }
