@@ -7,12 +7,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  // 1) Verificar que quien llama es Administrador (errores acá son de permisos: 403)
   try {
     await requireAdmin(req.headers.authorization);
+  } catch (err: any) {
+    res.status(403).json({ error: err.message || 'No autorizado.' });
+    return;
+  }
 
+  // 2) Crear el usuario (errores acá son del servidor o de datos: 400/500)
+  try {
     const { nickname, password, role, sedeIds } = req.body || {};
-    if (!nickname || !password || !role) {
-      res.status(400).json({ error: 'Faltan datos: nickname, password y role son obligatorios.' });
+    if (!nickname || !String(nickname).trim() || !password || !role) {
+      res.status(400).json({ error: 'Faltan datos: usuario, clave y rol son obligatorios.' });
       return;
     }
     if (String(password).length < 6) {
@@ -30,7 +37,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     if (createErr || !created.user) {
-      res.status(400).json({ error: createErr?.message || 'No se pudo crear el usuario.' });
+      const msg = createErr?.message || '';
+      const friendly = /already registered|already exists/i.test(msg)
+        ? `Ya existe un usuario con el nombre "${nickname}". Elegí otro.`
+        : msg || 'No se pudo crear el usuario.';
+      res.status(400).json({ error: friendly });
       return;
     }
 
@@ -44,12 +55,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (profileErr) {
       // Si falla la creación del perfil, deshacemos el usuario de Auth para no dejar huérfanos
       await admin.auth.admin.deleteUser(created.user.id);
-      res.status(400).json({ error: profileErr.message });
+      const friendly = /duplicate key|unique constraint/i.test(profileErr.message)
+        ? `Ya existe un usuario con el nombre "${nickname}". Elegí otro.`
+        : profileErr.message;
+      res.status(400).json({ error: friendly });
       return;
     }
 
     res.status(200).json({ ok: true, userId: created.user.id });
   } catch (err: any) {
-    res.status(403).json({ error: err.message || 'Error inesperado.' });
+    res.status(500).json({ error: err.message || 'Error inesperado del servidor.' });
   }
 }
