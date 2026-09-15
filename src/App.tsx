@@ -63,6 +63,7 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
         remoteUpdateRef.current = true;
         setConfig(state.config);
         setSellers(state.sellers);
+        setSelectedDay(state.config.currentWorkingDay);
       })
       .finally(() => active && setSedeLoading(false));
 
@@ -79,6 +80,7 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
   }, [currentSedeId]);
 
   // Guardar en Supabase cuando config/sellers cambian LOCALMENTE (no por eco de Realtime)
+  const [saveError, setSaveError] = useState(false);
   useEffect(() => {
     if (!currentSedeId || !config) return;
     if (remoteUpdateRef.current) {
@@ -86,7 +88,12 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
       return;
     }
     const t = setTimeout(() => {
-      saveSede(currentSedeId, config, sellers).catch((err) => console.error('Error al guardar la sede', err));
+      saveSede(currentSedeId, config, sellers)
+        .then(() => setSaveError(false))
+        .catch((err) => {
+          console.error('Error al guardar la sede', err);
+          setSaveError(true);
+        });
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,9 +101,6 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
 
   // --- Día seleccionado, modales, pantalla completa, tabs ---
   const [selectedDay, setSelectedDay] = useState<number>(1);
-  useEffect(() => {
-    if (config) setSelectedDay(config.currentWorkingDay);
-  }, [currentSedeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isUsersOpen, setIsUsersOpen] = useState(false);
@@ -287,8 +291,9 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
   };
 
   const handleCreateSede = async (name: string) => {
-    await createSede(name);
+    const nueva = await createSede(name);
     await loadSedes();
+    setCurrentSedeId(nueva.id);
   };
 
   // --- Estados de carga / vacío ---
@@ -324,6 +329,11 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col selection:bg-yellow-400 selection:text-zinc-950">
+      {saveError && (
+        <div className="bg-red-500/15 border-b border-red-500/30 text-red-300 text-xs text-center py-1.5 px-4">
+          No se pudieron guardar los últimos cambios. Revisá tu conexión — se van a reintentar solos al seguir cargando datos.
+        </div>
+      )}
       <Header
         config={config}
         onOpenAdmin={() => setIsAdminOpen(true)}
