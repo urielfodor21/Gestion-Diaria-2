@@ -63,7 +63,11 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ sedes,
           </button>
         </div>
 
-        {error && <p className="text-xs text-red-400 mb-3">{error}</p>}
+        {error && (
+          <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+            {error}
+          </div>
+        )}
 
         <button
           type="button"
@@ -243,7 +247,11 @@ const CreateUserForm: React.FC<{
         </div>
       )}
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && (
+        <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+          {error}
+        </div>
+      )}
 
       <div className="flex items-center gap-2 pt-1">
         <button
@@ -349,7 +357,11 @@ const EditUserForm: React.FC<{
         />
       </div>
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && (
+        <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+          {error}
+        </div>
+      )}
 
       <div className="flex items-center justify-between pt-1">
         <button
