@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAdminClient, requireAdmin, nicknameToEmail } from './_lib/supabaseAdmin';
+import { getAdminClient, requireAdmin, nicknameToEmail } from './_lib/supabaseAdmin.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
