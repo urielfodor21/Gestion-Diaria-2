@@ -9,10 +9,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     await requireAdmin(req.headers.authorization);
+  } catch (err: any) {
+    res.status(403).json({ error: err.message || 'No autorizado.' });
+    return;
+  }
 
+  try {
     const { userId, role, sedeIds, password } = req.body || {};
     if (!userId) {
-      res.status(400).json({ error: 'Falta userId.' });
+      res.status(400).json({ error: 'Falta el usuario a editar.' });
       return;
     }
 
@@ -25,7 +30,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const { error: pwErr } = await admin.auth.admin.updateUserById(userId, { password });
       if (pwErr) {
-        res.status(400).json({ error: pwErr.message });
+        res.status(400).json({ error: pwErr.message || 'No se pudo cambiar la clave.' });
         return;
       }
     }
@@ -37,13 +42,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (Object.keys(updates).length > 0) {
       const { error: profileErr } = await admin.from('profiles').update(updates).eq('id', userId);
       if (profileErr) {
-        res.status(400).json({ error: profileErr.message });
+        res.status(400).json({ error: profileErr.message || 'No se pudo actualizar el usuario.' });
         return;
       }
     }
 
     res.status(200).json({ ok: true });
   } catch (err: any) {
-    res.status(403).json({ error: err.message || 'Error inesperado.' });
+    res.status(500).json({ error: err.message || 'Error inesperado del servidor.' });
   }
 }
