@@ -26,7 +26,6 @@ import { formatARS } from '../utils/formatters';
 import {
   getMonthDays,
   parsePeriodString,
-  getDaysInMonth,
 } from '../utils/calendar';
 
 interface DailyClosingBoardProps {
@@ -50,7 +49,6 @@ interface DailyClosingBoardProps {
   readOnly?: boolean;
   onUpdateArticulos: (sellerId: string, dayNumber: number, amount: number) => void;
   onAdjustDebitosCount: (sellerId: string, delta: number) => void;
-  onUpdateDebitosTarget: (sellerId: string, target: number) => void;
 }
 
 export const DailyClosingBoard: React.FC<DailyClosingBoardProps> = ({
@@ -69,7 +67,6 @@ export const DailyClosingBoard: React.FC<DailyClosingBoardProps> = ({
   readOnly = false,
   onUpdateArticulos,
   onAdjustDebitosCount,
-  onUpdateDebitosTarget,
 }) => {
   // Inputs numéricos de ventas de cada vendedor para el día seleccionado
   const [inputValues, setInputValues] = useState<Record<string, string>>(() => {
@@ -91,10 +88,6 @@ export const DailyClosingBoard: React.FC<DailyClosingBoardProps> = ({
     return initial;
   });
 
-  // Edición inline del objetivo de Débitos Automáticos por vendedor
-  const [editingDebitosTargetId, setEditingDebitosTargetId] = useState<string | null>(null);
-  const [debitosTargetInput, setDebitosTargetInput] = useState<string>('');
-
   const [savedSuccessMap, setSavedSuccessMap] = useState<Record<string, boolean>>({});
 
   // Editor del objetivo específico del día
@@ -115,8 +108,7 @@ export const DailyClosingBoard: React.FC<DailyClosingBoardProps> = ({
   const [newSellerTarget, setNewSellerTarget] = useState<string>('15000000');
   const [newSellerSatTarget, setNewSellerSatTarget] = useState<string>('350000');
 
-  // Filtro en la barra de días: mostrar todos o solo laborables
-  const [showAllCalendarDays, setShowAllCalendarDays] = useState<boolean>(true);
+  // Filtro en la barra de días: SIEMPRE se descartan los domingos (sede cerrada)
 
   // Detección de calendario
   const { year, month } = config.calendarYear && config.calendarMonth
@@ -204,17 +196,7 @@ export const DailyClosingBoard: React.FC<DailyClosingBoardProps> = ({
     }
   };
 
-  // --- Débitos Automáticos por vendedor (objetivo + conteo, sin monto) ---
-  const handleStartEditDebitosTarget = (sellerId: string, currentTarget: number) => {
-    setEditingDebitosTargetId(sellerId);
-    setDebitosTargetInput(currentTarget > 0 ? String(currentTarget) : '');
-  };
-
-  const handleSaveDebitosTarget = (sellerId: string) => {
-    const value = parseInt(debitosTargetInput.replace(/[^0-9]/g, ''), 10) || 0;
-    onUpdateDebitosTarget(sellerId, value);
-    setEditingDebitosTargetId(null);
-  };
+  // --- Débitos Automáticos por vendedor (el objetivo se configura en Configuración; acá solo se cuenta) ---
 
   // Suma total cargada en este día seleccionado
   const totalDaySales = sellers.reduce((acc, s) => {
@@ -325,10 +307,8 @@ export const DailyClosingBoard: React.FC<DailyClosingBoardProps> = ({
     setIsAddSellerOpen(false);
   };
 
-  // Lista de días a mostrar según calendario
-  const displayedDays = showAllCalendarDays
-    ? monthCalendarDays
-    : monthCalendarDays.filter((d) => !d.isSunday);
+  // Lista de días a mostrar: siempre sin domingos (sede cerrada esos días)
+  const displayedDays = monthCalendarDays.filter((d) => !d.isSunday);
 
   return (
     <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-4 sm:p-5 shadow-xl">
@@ -422,26 +402,16 @@ export const DailyClosingBoard: React.FC<DailyClosingBoardProps> = ({
           </div>
         </div>
 
-        {/* Sub-barra con toggle de filtro y leyenda */}
-        <div className="flex items-center justify-between gap-2 mb-2 text-[11px] text-zinc-400">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-yellow-400" />
-              <span>Sábados: meta especial</span>
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-rose-500" />
-              <span>Domingos: cerrado</span>
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowAllCalendarDays(!showAllCalendarDays)}
-            className="text-[11px] px-2 py-0.5 rounded-lg bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white transition cursor-pointer"
-          >
-            {showAllCalendarDays ? 'Ocultar domingos de la tira' : 'Mostrar mes completo (30 días)'}
-          </button>
+        {/* Leyenda */}
+        <div className="flex items-center gap-3 mb-2 text-[11px] text-zinc-400">
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-yellow-400" />
+            <span>Sábados: meta especial</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-rose-500" />
+            <span>Domingos: cerrado (no se muestran)</span>
+          </span>
         </div>
 
         {/* Barra desplazable de días */}
@@ -1007,90 +977,83 @@ export const DailyClosingBoard: React.FC<DailyClosingBoardProps> = ({
                 )}
               </div>
 
-              {/* Artículos (desglose informativo) y Débitos Automáticos por vendedor */}
-              {!isPeriodic && (
-                <div className="w-full flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2 mt-1 border-t border-zinc-800/70">
-                  {/* Venta en Artículos */}
-                  <div className="flex items-center gap-1.5 flex-1">
-                    <span className="text-[11px] text-zinc-500 shrink-0 flex items-center gap-1">
-                      <Sheet className="h-3 w-3" />
-                      Artículos:
-                    </span>
-                    <div className="relative flex-1 max-w-[160px]">
-                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-zinc-600">$</span>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="0"
-                        disabled={readOnly}
-                        value={articulosInputValues[seller.id] !== undefined ? articulosInputValues[seller.id] : ''}
-                        onChange={(e) => handleArticulosInputChange(seller.id, e.target.value)}
-                        onBlur={() => handleApplyArticulos(seller.id)}
-                        onKeyDown={(e) => handleArticulosKeyDown(e, seller.id)}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-md pl-6 pr-2 py-1 text-[11px] font-mono text-zinc-300 placeholder-zinc-700 focus:outline-none focus:border-yellow-400 disabled:opacity-50 transition"
-                        title="De la venta ya cargada, cuánto corresponde a artículos (no se suma aparte)"
-                      />
+              {/* Artículos y Débitos Automáticos — objetivo mensual, bien compacto */}
+              {!isPeriodic && (() => {
+                const articulosAcum = Object.values(seller.articulosHistory || {}).reduce(
+                  (a, v) => a + (Number(v) || 0), 0
+                );
+                const articulosObj = seller.articulosTarget || 0;
+                const articulosFalta = Math.max(0, articulosObj - articulosAcum);
+                const debitosCount = seller.debitosAutomaticosCount || 0;
+                const debitosObj = seller.debitosAutomaticosTarget || 0;
+                const debitosFalta = Math.max(0, debitosObj - debitosCount);
+
+                return (
+                  <div className="w-full flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-2 mt-1 border-t border-zinc-800/70 text-[11px]">
+                    {/* Venta en Artículos */}
+                    <div className="flex items-center gap-1.5">
+                      <Sheet className="h-3 w-3 text-zinc-500 shrink-0" />
+                      <div className="relative w-24">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-zinc-600">$</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="0"
+                          disabled={readOnly}
+                          value={articulosInputValues[seller.id] !== undefined ? articulosInputValues[seller.id] : ''}
+                          onChange={(e) => handleArticulosInputChange(seller.id, e.target.value)}
+                          onBlur={() => handleApplyArticulos(seller.id)}
+                          onKeyDown={(e) => handleArticulosKeyDown(e, seller.id)}
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-md pl-5 pr-1.5 py-1 font-mono text-zinc-300 placeholder-zinc-700 focus:outline-none focus:border-yellow-400 disabled:opacity-50 transition"
+                          title="De la venta ya cargada, cuánto fue en artículos hoy (no se suma aparte)"
+                        />
+                      </div>
+                      {articulosObj > 0 ? (
+                        <span className="text-zinc-500 font-mono">
+                          {formatARS(articulosAcum)}/{formatARS(articulosObj)}
+                          {articulosFalta > 0 && <span className="text-zinc-600"> · falta {formatARS(articulosFalta)}</span>}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-600">sin objetivo</span>
+                      )}
+                    </div>
+
+                    {/* Débitos Automáticos */}
+                    <div className="flex items-center gap-1.5">
+                      <CreditCard className="h-3 w-3 text-zinc-500 shrink-0" />
+                      <span className="font-mono font-bold text-zinc-200">{debitosCount}</span>
+                      {debitosObj > 0 && (
+                        <span className="text-zinc-500 font-mono">
+                          /{debitosObj}{debitosFalta > 0 && <span className="text-zinc-600"> · faltan {debitosFalta}</span>}
+                        </span>
+                      )}
+                      {!readOnly && (
+                        <div className="flex items-center gap-1 ml-0.5">
+                          <button
+                            type="button"
+                            onClick={() => onAdjustDebitosCount(seller.id, -1)}
+                            className="h-5 w-5 rounded bg-zinc-900 border border-zinc-700 text-zinc-400 hover:bg-zinc-800 font-bold flex items-center justify-center cursor-pointer"
+                            title="Restar un Débito Automático (por error de carga)"
+                          >
+                            −
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onAdjustDebitosCount(seller.id, 1)}
+                            className="h-5 px-1.5 rounded bg-blue-500/15 border border-blue-500/40 text-blue-300 hover:bg-blue-500/25 font-bold flex items-center justify-center cursor-pointer"
+                            title="Sumar un Débito Automático de este vendedor"
+                          >
+                            +1 D.A.
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
-
-                  {/* Débitos Automáticos: objetivo + conteo */}
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] text-zinc-500 shrink-0 flex items-center gap-1">
-                      <CreditCard className="h-3 w-3" />
-                      D.A.:
-                    </span>
-                    <span className="text-xs font-mono font-bold text-zinc-200">
-                      {seller.debitosAutomaticosCount || 0}
-                    </span>
-                    <span className="text-[11px] text-zinc-600">/</span>
-                    {editingDebitosTargetId === seller.id ? (
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        autoFocus
-                        value={debitosTargetInput}
-                        onChange={(e) => setDebitosTargetInput(e.target.value.replace(/[^0-9]/g, ''))}
-                        onBlur={() => handleSaveDebitosTarget(seller.id)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSaveDebitosTarget(seller.id)}
-                        className="w-12 bg-zinc-900 border border-yellow-400 rounded-md px-1 py-0.5 text-[11px] font-mono text-zinc-100 focus:outline-none"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={readOnly}
-                        onClick={() => handleStartEditDebitosTarget(seller.id, seller.debitosAutomaticosTarget || 0)}
-                        className="text-[11px] font-mono text-zinc-400 hover:text-yellow-400 underline decoration-dotted disabled:no-underline disabled:hover:text-zinc-400"
-                        title="Click para modificar el objetivo de Débitos Automáticos de este vendedor"
-                      >
-                        {seller.debitosAutomaticosTarget || 0}
-                      </button>
-                    )}
-
-                    {!readOnly && (
-                      <div className="flex items-center gap-1 ml-1">
-                        <button
-                          type="button"
-                          onClick={() => onAdjustDebitosCount(seller.id, -1)}
-                          className="h-6 w-6 rounded-md bg-zinc-900 border border-zinc-700 text-zinc-400 hover:bg-zinc-800 text-xs font-bold flex items-center justify-center cursor-pointer"
-                          title="Restar un Débito Automático (por error de carga)"
-                        >
-                          −
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onAdjustDebitosCount(seller.id, 1)}
-                          className="h-6 px-2 rounded-md bg-blue-500/15 border border-blue-500/40 text-blue-300 hover:bg-blue-500/25 text-[11px] font-bold flex items-center justify-center gap-0.5 cursor-pointer"
-                          title="Sumar un Débito Automático de este vendedor"
-                        >
-                          +1 D.A.
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
             </div>
+
           );
         })}
       </div>
