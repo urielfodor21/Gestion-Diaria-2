@@ -217,3 +217,46 @@ export const calculateGlobalMetrics = (
     dailyTargetSede = saturdayTargetSede;
   } else if (customDailyTarget && customDailyTarget > 0) {
     // Lunes a Viernes regular
+    dailyTargetSede = customDailyTarget;
+  } else if (!isTargetSurpassed) {
+    dailyTargetSede = dailyTargetSede100;
+  }
+
+  const todaySedeGoal = dailyTargetSede;
+  const todaySedeVariance = totalTodaySales - todaySedeGoal;
+  const isTodaySedePositive = todaySedeVariance >= 0;
+
+  // Proyección de cierre de mes según ritmo diario actual
+  const currentDailyRate = currentWorkingDay > 0 ? totalSales / currentWorkingDay : 0;
+  const projectedMonthEnd = Math.round(currentDailyRate * totalWorkingDays);
+
+  return {
+    totalTarget: effectiveGlobalTarget,
+    totalSales,
+    totalTodaySales,
+    totalTransactions,
+    completionPercent,
+    expectedPercent,
+    expectedSalesToDate,
+    pacingVarianceAmount,
+    pacingVariancePercent,
+    isPacingPositive,
+    diffTotalTarget,
+    isTargetSurpassed,
+    baseDailyTarget,
+    remainingDailyTargetNeeded: dailyTargetSede100,
+    dailyTargetSede,
+    dailyTargetSede100,
+    dailyTargetSede140,
+    saturdayTargetSede,
+    todaySedeGoal,
+    todaySedeVariance,
+    isTodaySedePositive,
+    projectedMonthEnd,
+    remainingDays,
+    sundaysClosedCount,
+    saturdaysCount,
+    isTodaySaturday: isTodaySat,
+    isTodaySunday: isTodaySun,
+  };
+};
