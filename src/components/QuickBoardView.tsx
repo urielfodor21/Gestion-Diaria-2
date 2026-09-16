@@ -112,12 +112,15 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config,
                   const isCurrent = cell.dayNumber === config.currentWorkingDay;
                   const hasData = cell.dayTotal > 0;
                   const dayPositive = cell.dayTotal >= cell.dayTarget;
+                  const cumulativeHasData = cell.cumulativeTotal > 0 || cell.dayNumber <= config.currentWorkingDay;
+                  const cumulativeDelta = cell.cumulativeTotal - cell.cumulativeTarget;
+                  const cumulativePositive = cumulativeDelta >= 0;
 
                   return (
                     <div
                       key={colIdx}
                       title={`Día ${cell.dayNumber}: ${formatARS(cell.dayTotal)} de ${formatARS(cell.dayTarget)} — Acumulado a la fecha: ${formatARS(cell.cumulativeTotal)}`}
-                      className={`rounded-lg border min-h-[72px] p-2 flex flex-col justify-between transition ${
+                      className={`rounded-lg border min-h-[104px] p-2 flex flex-col justify-between gap-1 transition ${
                         isCurrent
                           ? 'border-yellow-400 bg-yellow-400/10'
                           : hasData
@@ -133,18 +136,52 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config,
                         </span>
                         {cell.isSaturday && <span className="text-[9px] text-zinc-600">Sáb</span>}
                       </div>
-                      <div className="text-right">
-                        {hasData ? (
-                          <span
-                            className={`text-[11px] font-mono font-bold ${
-                              dayPositive ? 'text-emerald-400' : 'text-rose-400'
-                            }`}
-                          >
-                            {formatARS(cell.dayTotal)}
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-zinc-700">—</span>
-                        )}
+
+                      <div className="space-y-0.5">
+                        {/* Total del día */}
+                        <div className="flex items-baseline justify-between gap-1">
+                          <span className="text-[9px] text-zinc-600 shrink-0">Día</span>
+                          {hasData ? (
+                            <span
+                              className={`text-[11px] font-mono font-bold ${
+                                dayPositive ? 'text-emerald-400' : 'text-rose-400'
+                              }`}
+                            >
+                              {formatARS(cell.dayTotal)}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-zinc-700">—</span>
+                          )}
+                        </div>
+
+                        {/* Total acumulado de la sede a la fecha */}
+                        <div className="flex items-baseline justify-between gap-1">
+                          <span className="text-[9px] text-zinc-600 shrink-0">Acum.</span>
+                          {cumulativeHasData ? (
+                            <span className="text-[11px] font-mono font-semibold text-zinc-200">
+                              {formatARS(cell.cumulativeTotal)}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-zinc-700">—</span>
+                          )}
+                        </div>
+
+                        {/* Verde/rojo acumulado: monto exacto por encima o debajo del objetivo acumulado */}
+                        <div className="flex items-baseline justify-between gap-1">
+                          <span className="text-[9px] text-zinc-600 shrink-0">Vs. obj.</span>
+                          {cumulativeHasData ? (
+                            <span
+                              className={`text-[11px] font-mono font-bold ${
+                                cumulativePositive ? 'text-emerald-400' : 'text-rose-400'
+                              }`}
+                            >
+                              {cumulativePositive ? '+' : '-'}
+                              {formatARS(Math.abs(cumulativeDelta))}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-zinc-700">—</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
