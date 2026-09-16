@@ -4,7 +4,6 @@ import {
   Settings,
   Target,
   Users,
-  Calendar,
   Save,
   RotateCcw,
   Divide,
@@ -12,38 +11,46 @@ import {
   Zap,
   Plus,
   Trash2,
+  History,
+  Download,
 } from 'lucide-react';
-import { BranchConfig, Seller } from '../types';
+import { BranchConfig, Seller, SedeHistoryEntry } from '../types';
 import { formatARS } from '../utils/formatters';
+import { fetchSedeHistoryList, fetchSedeHistoryEntryFull } from '../lib/sedeData';
+import { buildSedeMonthCSV, downloadCSV } from '../utils/csvExport';
 
 interface AdminPanelProps {
   isOpen: boolean;
   onClose: () => void;
   config: BranchConfig;
   sellers: Seller[];
+  sedeId: string | null;
   onSaveConfig: (newConfig: BranchConfig, newSellers: Seller[]) => void;
   onResetTodaySales: () => void;
   onResetMonthSales: () => void;
   onLoadDemoData: () => void;
 }
 
+const MONTH_NAMES_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   isOpen,
   onClose,
   config,
   sellers,
+  sedeId,
   onSaveConfig,
   onResetTodaySales,
   onResetMonthSales,
   onLoadDemoData,
 }) => {
   const [branchName, setBranchName] = useState(config.branchName);
-  const [periodName, setPeriodName] = useState(config.periodName);
   const [globalTarget, setGlobalTarget] = useState(config.globalTarget);
   const [autoSumGlobalTarget, setAutoSumGlobalTarget] = useState(config.autoSumGlobalTarget);
-  const [totalWorkingDays, setTotalWorkingDays] = useState(config.totalWorkingDays);
-  const [currentWorkingDay, setCurrentWorkingDay] = useState(config.currentWorkingDay);
-  
+
   // Parámetros de gestión diaria y sábados
   const [customDailyTarget, setCustomDailyTarget] = useState(
     config.customDailyTarget || Math.round(config.globalTarget / Math.max(1, config.totalWorkingDays))
@@ -55,6 +62,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const [localSellers, setLocalSellers] = useState<Seller[]>([...sellers]);
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  // Histórico de meses anteriores
+  const [historyList, setHistoryList] = useState<SedeHistoryEntry[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [exportingId, setExportingId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -73,7 +86,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleDistributeEqually = () => {
     if (localSellers.length === 0) return;
     const share = Math.round(globalTarget / localSellers.length);
-    const satShare = Math.round((share / Math.max(1, totalWorkingDays)) * 0.6);
+    const satShare = Math.round((share / Math.max(1, config.totalWorkingDays)) * 0.6);
     const updated = localSellers.map((s) => ({
       ...s,
       individualTarget: share,
@@ -129,20 +142,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleSave = () => {
     const newConfig: BranchConfig = {
+      ...config,
       branchName: branchName.trim() || 'Sede Central',
-      periodName: periodName.trim() || 'Mes Actual',
       globalTarget: Number(globalTarget) || 1,
       autoSumGlobalTarget,
-      totalWorkingDays: Math.max(1, Number(totalWorkingDays) || 24),
-      currentWorkingDay: Math.min(
-        Math.max(1, Number(totalWorkingDays) || 24),
-        Math.max(1, Number(currentWorkingDay) || 1)
-      ),
       customDailyTarget: Number(customDailyTarget) || undefined,
       isSaturdayMode,
       saturdayBranchTarget: Number(saturdayBranchTarget) || undefined,
-      dailyTargetOverrides: config.dailyTargetOverrides,
-      dailyTargetNotes: config.dailyTargetNotes,
     };
 
     onSaveConfig(newConfig, localSellers);
@@ -151,6 +157,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setSavedSuccess(false);
       onClose();
     }, 500);
+  };
+
+  const handleLoadHistory = async () => {
+    if (!sedeId) return;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const list = await fetchSedeHistoryList(sedeId);
+      setHistoryList(list);
+    } catch (err: any) {
+      setHistoryError(err.message || 'No se pudo cargar el histórico.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleExportHistoryEntry = async (entry: SedeHistoryEntry) => {
+    setExportingId(entry.id);
+    try {
+      const full = await fetchSedeHistoryEntryFull(entry.id);
+      if (!full) throw new Error('No se encontró ese mes.');
+      const csv = buildSedeMonthCSV(full.config, full.sellers);
+      const fileName = `${entry.branchName}_${MONTH_NAMES_ES[entry.month - 1]}_${entry.year}.csv`.replace(/\s+/g, '_');
+      downloadCSV(fileName, csv);
+    } catch (err: any) {
+      setHistoryError(err.message || 'No se pudo exportar ese mes.');
+    } finally {
+      setExportingId(null);
+    }
   };
 
   return (
@@ -251,11 +286,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
 
-          {/* Sección 2: Parámetros de Sede y Calendario */}
+          {/* Sección 2: Parámetros de Sede */}
           <div className="bg-zinc-950 rounded-xl p-3.5 border border-zinc-800">
             <h4 className="text-xs font-bold text-zinc-400 mb-2.5 flex items-center gap-2">
               <Building2 className="h-4 w-4 text-yellow-400" />
-              <span>Parámetros de Sede y Calendario Mensual</span>
+              <span>Parámetros de Sede</span>
             </h4>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -273,42 +308,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                  Período / Mes
+                  Período (automático)
                 </label>
-                <input
-                  type="text"
-                  value={periodName}
-                  onChange={(e) => setPeriodName(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-100 text-xs focus:outline-none focus:border-yellow-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                  Días Laborables Totales
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={totalWorkingDays}
-                  onChange={(e) => setTotalWorkingDays(Number(e.target.value))}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-100 text-xs font-mono focus:outline-none focus:border-yellow-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                  Día Laborable Actual Transcurrido
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max={totalWorkingDays}
-                  value={currentWorkingDay}
-                  onChange={(e) => setCurrentWorkingDay(Number(e.target.value))}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-100 text-xs font-mono focus:outline-none focus:border-yellow-400"
-                />
+                <div className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-400 text-xs">
+                  {config.periodName} — Día {config.currentWorkingDay} de {config.totalWorkingDays}
+                </div>
               </div>
             </div>
           </div>
@@ -398,7 +402,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   key={seller.id}
                   className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5 p-2 rounded-lg bg-zinc-900 border border-zinc-800"
                 >
-                  <div className="flex items-center gap-2 w-full sm:w-1/3">
+                  <div className="flex items-center gap-2 w-full sm:w-1/4">
                     <div className="h-6 w-6 rounded bg-zinc-800 border border-zinc-700 flex items-center justify-center text-yellow-400 font-bold text-[10px] shrink-0">
                       {idx + 1}
                     </div>
@@ -411,7 +415,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     />
                   </div>
 
-                  <div className="flex-1 w-full grid grid-cols-2 gap-2">
+                  <div className="flex-1 w-full grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <div>
                       <span className="text-[10px] text-zinc-400 block mb-0.5">Objetivo Mensual:</span>
                       <input
@@ -439,6 +443,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-yellow-400 font-mono font-bold focus:outline-none focus:border-yellow-400"
                       />
                     </div>
+
+                    <div>
+                      <span className="text-[10px] text-zinc-400 block mb-0.5">Obj. Artículos ($, mensual):</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="10000"
+                        value={seller.articulosTarget || 0}
+                        onChange={(e) =>
+                          handleSellerChange(idx, 'articulosTarget', Number(e.target.value))
+                        }
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 font-mono font-bold focus:outline-none focus:border-yellow-400"
+                      />
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-blue-400 block mb-0.5">Obj. Débitos (cant., mensual):</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={seller.debitosAutomaticosTarget || 0}
+                        onChange={(e) =>
+                          handleSellerChange(idx, 'debitosAutomaticosTarget', Number(e.target.value))
+                        }
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-blue-300 font-mono font-bold focus:outline-none focus:border-yellow-400"
+                      />
+                    </div>
                   </div>
 
                   {localSellers.length > 1 && (
@@ -456,7 +488,63 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
 
-          {/* Sección 5: Mantenimiento */}
+          {/* Sección 5: Histórico de Meses Anteriores */}
+          <div className="bg-zinc-950 rounded-xl p-3.5 border border-zinc-800">
+            <div className="flex items-center justify-between mb-2.5">
+              <h4 className="text-xs font-bold text-zinc-400 flex items-center gap-2">
+                <History className="h-4 w-4 text-yellow-400" />
+                <span>Histórico de Meses Anteriores</span>
+              </h4>
+              {historyList === null && (
+                <button
+                  type="button"
+                  onClick={handleLoadHistory}
+                  disabled={historyLoading}
+                  className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 text-[11px] font-semibold cursor-pointer disabled:opacity-60"
+                >
+                  {historyLoading ? 'Cargando...' : 'Ver histórico'}
+                </button>
+              )}
+            </div>
+
+            {historyError && (
+              <div className="mb-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-[11px] text-red-400">
+                {historyError}
+              </div>
+            )}
+
+            {historyList !== null && (
+              historyList.length === 0 ? (
+                <p className="text-[11px] text-zinc-500">
+                  Todavía no hay meses archivados — se van a ir guardando solos cada vez que empiece un mes nuevo.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {historyList.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800"
+                    >
+                      <span className="text-xs text-zinc-200 font-semibold">
+                        {MONTH_NAMES_ES[entry.month - 1]} {entry.year}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleExportHistoryEntry(entry)}
+                        disabled={exportingId === entry.id}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-yellow-400 text-[11px] font-bold cursor-pointer disabled:opacity-60"
+                      >
+                        <Download className="h-3 w-3" />
+                        {exportingId === entry.id ? 'Exportando...' : 'Descargar CSV'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+
+          {/* Sección 6: Mantenimiento */}
           <div className="bg-zinc-950 rounded-xl p-3 border border-zinc-800">
             <h4 className="text-xs font-bold text-zinc-400 mb-2 flex items-center gap-2">
               <RotateCcw className="h-4 w-4 text-yellow-400" />
