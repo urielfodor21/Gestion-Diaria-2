@@ -1,246 +1,176 @@
-import { BranchConfig, GlobalCalculations, Seller, SellerCalculations } from '../types';
-import { isDaySaturday, isDaySunday, parsePeriodString, countSundays, countSaturdays } from './calendar';
+import React, { useMemo } from 'react';
+import { LayoutGrid, TrendingUp, TrendingDown } from 'lucide-react';
+import { BranchConfig, GlobalCalculations, Seller } from '../types';
+import { formatARS } from '../utils/formatters';
+import { getMonthDays, parsePeriodString } from '../utils/calendar';
 
-/**
- * Calcula las métricas individuales de cada vendedor:
- * - % alcanzado
- * - % esperado según día actual transcurrido
- * - Desvío positivo (+) o negativo (-) respecto al ritmo esperado
- * - Desvío respecto a la meta total
- * - Objetivo diario necesario para alcanzar el 100% de su meta
- * - Objetivo diario necesario para alcanzar el 140% de su meta (Acelerador)
- * - Objetivo individual para días sábado
- * - Meta y resultado del día de hoy (cierre diario)
- */
-export const calculateSellerMetrics = (
-  seller: Seller,
-  config: BranchConfig
-): SellerCalculations => {
-  const { totalWorkingDays, currentWorkingDay, isSaturdayMode } = config;
-  const target = Math.max(1, seller.individualTarget);
-  const sales = Math.max(0, seller.currentSales);
-  
-  // Días restantes para el cálculo del ritmo diario (mínimo 1)
-  const remainingDays = Math.max(1, totalWorkingDays - currentWorkingDay);
+interface QuickBoardViewProps {
+  sellers: Seller[];
+  config: BranchConfig;
+  globalMetrics: GlobalCalculations;
+}
 
-  // 1. Porcentaje total alcanzado
-  const completionPercent = (sales / target) * 100;
+interface DayCell {
+  dayNumber: number;
+  isSaturday: boolean;
+  dayTotal: number;
+  dayTarget: number;
+  cumulativeTotal: number; // acumulado de la sede HASTA este día (incluido)
+  cumulativeTarget: number;
+}
 
-  // 2. Porcentaje esperado según los días transcurridos
-  const expectedPercent = totalWorkingDays > 0 ? (currentWorkingDay / totalWorkingDays) * 100 : 0;
+const COLUMN_LABELS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 
-  // 3. Venta esperada en pesos al día de hoy
-  const expectedSalesToDate = (target * expectedPercent) / 100;
+export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config, globalMetrics }) => {
+  const { weeks, finalCumulativeTotal, finalCumulativeTarget } = useMemo(() => {
+    const { year, month } =
+      config.calendarYear && config.calendarMonth
+        ? { year: config.calendarYear, month: config.calendarMonth }
+        : parsePeriodString(config.periodName);
 
-  // 4. Desvío por sobre o por debajo de la venta esperada a la fecha
-  const pacingVarianceAmount = sales - expectedSalesToDate;
-  const pacingVariancePercent = completionPercent - expectedPercent;
-  const isPacingPositive = pacingVarianceAmount >= 0;
+    const allDays = getMonthDays(year, month);
 
-  // 5. Diferencia total contra la meta
-  const diffTotalTarget = sales - target;
-  const isTargetSurpassed = sales >= target;
+    let runningTotal = 0;
+    let runningTarget = 0;
 
-  // Canales periódicos/lump sum (Débitos, Gympass) no tienen objetivo diario dividido
-  const isPeriodic = seller.isPeriodicChannel ||
-    seller.name.toLowerCase().includes('débito') ||
-    seller.name.toLowerCase().includes('debito') ||
-    seller.name.toLowerCase().includes('gympass');
+    const weeksResult: (DayCell | null)[][] = [];
+    let currentWeek: (DayCell | null)[] = new Array(6).fill(null);
+    let weekStarted = false;
 
-  // 6. Objetivo diario base (promedio general del mes)
-  const baseDailyTarget = isPeriodic || totalWorkingDays <= 0 ? 0 : Math.round(target / totalWorkingDays);
+    for (const d of allDays) {
+      if (d.isSunday) continue; // La sede no opera los domingos: sin columna para ese día
 
-  // 7. Metas al 100% y al 140%
-  const isTarget100Surpassed = sales >= target;
-  const target140Total = Math.round(target * 1.4);
-  const isTarget140Surpassed = sales >= target140Total;
+      const colIndex = d.dayOfWeek - 1; // Lunes(1)->0 ... Sábado(6)->5
 
-  // Objetivo diario necesario para alcanzar el 100%
-  const dailyTarget100 = isPeriodic || isTarget100Surpassed
-    ? 0
-    : Math.max(0, Math.round((target - sales) / remainingDays));
+      if (colIndex === 0 && weekStarted) {
+        weeksResult.push(currentWeek);
+        currentWeek = new Array(6).fill(null);
+      }
 
-  // Objetivo diario necesario para alcanzar el 140%
-  const dailyTarget140 = isPeriodic || isTarget140Surpassed
-    ? 0
-    : Math.max(0, Math.round((target140Total - sales) / remainingDays));
+      const dayTotal = sellers.reduce((acc, s) => acc + (Number(s.dailySalesHistory?.[d.dayNumber]) || 0), 0);
 
-  // Objetivo específico de sábado
-  const saturdayTarget = isPeriodic ? 0 : (seller.saturdayTarget || Math.round(baseDailyTarget * 0.6));
+      const override = config.dailyTargetOverrides?.[d.dayNumber];
+      const dayTarget =
+        override !== undefined && override > 0
+          ? override
+          : d.isSaturday
+          ? config.saturdayBranchTarget || globalMetrics.saturdayTargetSede
+          : config.customDailyTarget && config.customDailyTarget > 0
+          ? config.customDailyTarget
+          : globalMetrics.dailyTargetSede;
 
-  // Detección de día sábado o domingo según calendario
-  const { year, month } = config.calendarYear && config.calendarMonth
-    ? { year: config.calendarYear, month: config.calendarMonth }
-    : parsePeriodString(config.periodName);
-  const isTodaySat = isSaturdayMode || isDaySaturday(currentWorkingDay, year, month);
-  const isTodaySun = isDaySunday(currentWorkingDay, year, month);
+      runningTotal += dayTotal;
+      runningTarget += dayTarget;
 
-  // Meta específica del día de hoy
-  let todayGoal = 0;
-  if (!isPeriodic) {
-    if (isTodaySun) {
-      todayGoal = 0; // Domingo cerrado, sin meta
-    } else if (isTodaySat) {
-      todayGoal = saturdayTarget; // Sábado con meta especial de sábado
-    } else {
-      todayGoal = dailyTarget100 > 0 ? dailyTarget100 : baseDailyTarget;
+      currentWeek[colIndex] = {
+        dayNumber: d.dayNumber,
+        isSaturday: d.isSaturday,
+        dayTotal,
+        dayTarget,
+        cumulativeTotal: runningTotal,
+        cumulativeTarget: runningTarget,
+      };
+      weekStarted = true;
     }
-  }
+    if (weekStarted) weeksResult.push(currentWeek);
 
-  const todayVariance = (seller.todaySales || 0) - todayGoal;
-  const isTodayPositive = todayVariance >= 0;
+    return { weeks: weeksResult, finalCumulativeTotal: runningTotal, finalCumulativeTarget: runningTarget };
+  }, [sellers, config, globalMetrics]);
 
-  // Proyección de cierre de mes para este vendedor según su ritmo diario actual
-  const currentDailyRate = currentWorkingDay > 0 ? sales / currentWorkingDay : 0;
-  const projectedMonthEnd = Math.round(currentDailyRate * totalWorkingDays);
+  const sedePositive = finalCumulativeTotal >= finalCumulativeTarget;
 
-  return {
-    seller,
-    completionPercent,
-    expectedPercent,
-    pacingVariancePercent,
-    expectedSalesToDate,
-    pacingVarianceAmount,
-    isPacingPositive,
-    diffTotalTarget,
-    isTargetSurpassed,
-    baseDailyTarget,
-    remainingDailyTargetNeeded: dailyTarget100,
-    dailyTarget100,
-    dailyTarget140,
-    isTarget100Surpassed,
-    isTarget140Surpassed,
-    target140Total,
-    saturdayTarget,
-    todayGoal,
-    todayVariance,
-    isTodayPositive,
-    remainingDays,
-    projectedMonthEnd,
-  };
-};
+  return (
+    <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 sm:p-5">
+      <div className="flex items-center gap-2 mb-1">
+        <LayoutGrid className="h-4 w-4 text-yellow-400" />
+        <h2 className="text-sm font-bold text-zinc-200">Vista Rápida — Pizarrón del Mes</h2>
+      </div>
+      <p className="text-[11px] text-zinc-600 mb-4">
+        Solo lectura: un vistazo tipo calendario a todo el mes, con el total vendido cada día.
+      </p>
 
-/**
- * Calcula las métricas globales para toda la sede:
- * - Total y porcentaje alcanzado
- * - Gestión del objetivo diario de la sede (manual o automático)
- * - Ritmo diario necesario para 100% y 140% de la sede
- * - Distinción para días sábado (Objetivo Diario Sábados)
- * - Descarte de domingos cerrados
- */
-export const calculateGlobalMetrics = (
-  sellers: Seller[],
-  config: BranchConfig
-): GlobalCalculations => {
-  const {
-    totalWorkingDays,
-    currentWorkingDay,
-    globalTarget,
-    autoSumGlobalTarget,
-    customDailyTarget,
-    isSaturdayMode = false,
-    saturdayBranchTarget,
-  } = config;
+      <div className="overflow-x-auto -mx-2 px-2">
+        <div className="min-w-[640px]">
+          {/* Encabezado de columnas (días de la semana) */}
+          <div className="grid grid-cols-6 gap-1.5 mb-1.5">
+            {COLUMN_LABELS.map((label) => (
+              <div key={label} className="text-center text-[11px] font-bold text-zinc-500 py-1">
+                {label}
+              </div>
+            ))}
+          </div>
 
-  const { year, month } = config.calendarYear && config.calendarMonth
-    ? { year: config.calendarYear, month: config.calendarMonth }
-    : parsePeriodString(config.periodName);
+          {/* Filas: una por semana */}
+          <div className="space-y-1.5">
+            {weeks.map((week, weekIdx) => (
+              <div key={weekIdx} className="grid grid-cols-6 gap-1.5">
+                {week.map((cell, colIdx) => {
+                  if (!cell) {
+                    return <div key={colIdx} className="rounded-lg bg-zinc-950/30 border border-zinc-900 min-h-[72px]" />;
+                  }
 
-  const isTodaySat = isSaturdayMode || isDaySaturday(currentWorkingDay, year, month);
-  const isTodaySun = isDaySunday(currentWorkingDay, year, month);
-  const sundaysClosedCount = countSundays(year, month);
-  const saturdaysCount = countSaturdays(year, month);
+                  const isCurrent = cell.dayNumber === config.currentWorkingDay;
+                  const hasData = cell.dayTotal > 0;
+                  const dayPositive = cell.dayTotal >= cell.dayTarget;
 
-  const totalSales = sellers.reduce((acc, s) => acc + s.currentSales, 0);
-  const totalTodaySales = sellers.reduce((acc, s) => acc + (s.todaySales || 0), 0);
-  const totalTransactions = sellers.reduce((acc, s) => acc + s.transactionsCount, 0);
-  const sellersTargetSum = sellers.reduce((acc, s) => acc + s.individualTarget, 0);
-  const sellersSaturdaySum = sellers.reduce((acc, s) => acc + (s.saturdayTarget || 0), 0);
+                  return (
+                    <div
+                      key={colIdx}
+                      title={`Día ${cell.dayNumber}: ${formatARS(cell.dayTotal)} de ${formatARS(cell.dayTarget)} — Acumulado a la fecha: ${formatARS(cell.cumulativeTotal)}`}
+                      className={`rounded-lg border min-h-[72px] p-2 flex flex-col justify-between transition ${
+                        isCurrent
+                          ? 'border-yellow-400 bg-yellow-400/10'
+                          : hasData
+                          ? dayPositive
+                            ? 'border-emerald-800/60 bg-emerald-500/10'
+                            : 'border-rose-800/60 bg-rose-500/10'
+                          : 'border-zinc-800 bg-zinc-950/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[11px] font-bold ${isCurrent ? 'text-yellow-400' : 'text-zinc-400'}`}>
+                          {cell.dayNumber}
+                        </span>
+                        {cell.isSaturday && <span className="text-[9px] text-zinc-600">Sáb</span>}
+                      </div>
+                      <div className="text-right">
+                        {hasData ? (
+                          <span
+                            className={`text-[11px] font-mono font-bold ${
+                              dayPositive ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {formatARS(cell.dayTotal)}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-zinc-700">—</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
-  const effectiveGlobalTarget = autoSumGlobalTarget ? sellersTargetSum : Math.max(1, globalTarget);
-  const remainingDays = Math.max(1, totalWorkingDays - currentWorkingDay);
-
-  const completionPercent = effectiveGlobalTarget > 0 ? (totalSales / effectiveGlobalTarget) * 100 : 0;
-  const expectedPercent = totalWorkingDays > 0 ? (currentWorkingDay / totalWorkingDays) * 100 : 0;
-  const expectedSalesToDate = (effectiveGlobalTarget * expectedPercent) / 100;
-
-  const pacingVarianceAmount = totalSales - expectedSalesToDate;
-  const pacingVariancePercent = completionPercent - expectedPercent;
-  const isPacingPositive = pacingVarianceAmount >= 0;
-
-  const diffTotalTarget = totalSales - effectiveGlobalTarget;
-  const isTargetSurpassed = totalSales >= effectiveGlobalTarget;
-
-  const baseDailyTarget = totalWorkingDays > 0 ? Math.round(effectiveGlobalTarget / totalWorkingDays) : 0;
-
-  // Objetivos de sede al 100% y al 140%
-  const globalTarget140 = Math.round(effectiveGlobalTarget * 1.4);
-  const dailyTargetSede100 = isTargetSurpassed
-    ? 0
-    : Math.max(0, Math.round((effectiveGlobalTarget - totalSales) / remainingDays));
-  const dailyTargetSede140 = totalSales >= globalTarget140
-    ? 0
-    : Math.max(0, Math.round((globalTarget140 - totalSales) / remainingDays));
-
-  // Objetivo Sábado de la sede (Objetivo Diario Sábados)
-  const saturdayTargetSede = saturdayBranchTarget && saturdayBranchTarget > 0
-    ? saturdayBranchTarget
-    : (sellersSaturdaySum > 0 ? sellersSaturdaySum : Math.round(baseDailyTarget * 0.6));
-
-  // Objetivo Diario Efectivo de la Sede
-  const currentDayOverride = config.dailyTargetOverrides?.[currentWorkingDay];
-  let dailyTargetSede = baseDailyTarget;
-
-  if (currentDayOverride !== undefined && currentDayOverride > 0) {
-    dailyTargetSede = currentDayOverride;
-  } else if (isTodaySun) {
-    // Domingo cerrado: objetivo 0
-    dailyTargetSede = 0;
-  } else if (isTodaySat) {
-    // Sábado: objetivo diario sábado
-    dailyTargetSede = saturdayTargetSede;
-  } else if (customDailyTarget && customDailyTarget > 0) {
-    // Lunes a Viernes regular
-    dailyTargetSede = customDailyTarget;
-  } else if (!isTargetSurpassed) {
-    dailyTargetSede = dailyTargetSede100;
-  }
-
-  const todaySedeGoal = dailyTargetSede;
-  const todaySedeVariance = totalTodaySales - todaySedeGoal;
-  const isTodaySedePositive = todaySedeVariance >= 0;
-
-  // Proyección de cierre de mes según ritmo diario actual
-  const currentDailyRate = currentWorkingDay > 0 ? totalSales / currentWorkingDay : 0;
-  const projectedMonthEnd = Math.round(currentDailyRate * totalWorkingDays);
-
-  return {
-    totalTarget: effectiveGlobalTarget,
-    totalSales,
-    totalTodaySales,
-    totalTransactions,
-    completionPercent,
-    expectedPercent,
-    expectedSalesToDate,
-    pacingVarianceAmount,
-    pacingVariancePercent,
-    isPacingPositive,
-    diffTotalTarget,
-    isTargetSurpassed,
-    baseDailyTarget,
-    remainingDailyTargetNeeded: dailyTargetSede100,
-    dailyTargetSede,
-    dailyTargetSede100,
-    dailyTargetSede140,
-    saturdayTargetSede,
-    todaySedeGoal,
-    todaySedeVariance,
-    isTodaySedePositive,
-    projectedMonthEnd,
-    remainingDays,
-    sundaysClosedCount,
-    saturdaysCount,
-    isTodaySaturday: isTodaySat,
-    isTodaySunday: isTodaySun,
-  };
+      {/* Resumen: acumulado total de la sede */}
+      <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <span className="text-[11px] text-zinc-500 block">Acumulado Sede (a la fecha)</span>
+          <span className="text-lg font-bold text-zinc-100">{formatARS(finalCumulativeTotal)}</span>
+          <span className="text-xs text-zinc-600 ml-2">de {formatARS(finalCumulativeTarget)} esperado</span>
+        </div>
+        <span
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold ${
+            sedePositive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+          }`}
+        >
+          {sedePositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+          {sedePositive ? 'Arriba de lo esperado' : 'Abajo de lo esperado'}
+        </span>
+      </div>
+    </div>
+  );
 };
