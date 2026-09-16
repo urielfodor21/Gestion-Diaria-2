@@ -162,3 +162,29 @@ export const isDaySaturday = (dayNumber: number, year: number, month: number): b
   const date = new Date(year, month - 1, dayNumber);
   return date.getDay() === 6;
 };
+
+/**
+ * Detecta automáticamente el período comercial actual según la fecha real de hoy:
+ * año, mes, día del mes, cantidad de días laborables (sin domingos) y el nombre
+ * de período ya formateado. Se usa para que la app avance de día/mes sola, sin
+ * que haya que tocar nada a mano.
+ */
+export const getAutoPeriodInfo = (): {
+  year: number;
+  month: number;
+  day: number;
+  totalWorkingDays: number;
+  periodName: string;
+} => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  return {
+    year,
+    month,
+    day,
+    totalWorkingDays: countWorkingDays(year, month),
+    periodName: formatPeriodName(year, month),
+  };
+};
