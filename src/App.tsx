@@ -13,8 +13,9 @@ import { SedeSwitcher } from './components/SedeSwitcher';
 import { UserManagementPanel } from './components/UserManagementPanel';
 import { LoginScreen } from './components/LoginScreen';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { fetchAccessibleSedes, fetchSede, saveSede, subscribeToSede, createSede } from './lib/sedeData';
+import { fetchAccessibleSedes, fetchSede, saveSede, subscribeToSede, createSede, archiveSedeMonth } from './lib/sedeData';
 import { ROLE_LABELS, canEditTargets as canEditTargetsFn, canManageUsers as canManageUsersFn } from './lib/roles';
+import { getAutoPeriodInfo } from './utils/calendar';
 
 type Tab = 'pizarra' | 'vendedores' | 'vista-rapida';
 
@@ -79,6 +80,58 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
       unsubscribe();
     };
   }, [currentSedeId]);
+
+  // Sincronizar el día/mes automáticamente con el calendario real (sin tocar nada a mano).
+  // Si cambió el mes desde la última vez que se abrió la app, primero archiva el mes
+  // anterior completo en el histórico y después resetea la pizarra para el mes nuevo,
+  // conservando los objetivos de cada vendedor (solo se reinician las ventas cargadas).
+  useEffect(() => {
+    if (!config || !currentSedeId) return;
+    const auto = getAutoPeriodInfo();
+    const sameMonth = config.calendarYear === auto.year && config.calendarMonth === auto.month;
+
+    if (sameMonth) {
+      if (config.currentWorkingDay !== auto.day) {
+        setConfig((prev) => (prev ? { ...prev, currentWorkingDay: auto.day } : prev));
+      }
+      return;
+    }
+
+    (async () => {
+      try {
+        await archiveSedeMonth(currentSedeId, config, sellers);
+      } catch (err) {
+        console.error('No se pudo archivar el mes anterior en el histórico', err);
+      }
+      const resetSellers = sellers.map((s) => ({
+        ...s,
+        currentSales: 0,
+        todaySales: 0,
+        dailySalesHistory: {},
+        articulosHistory: {},
+        debitosAutomaticosCount: 0,
+        transactionsCount: 0,
+      }));
+      setSellers(resetSellers);
+      setConfig((prev) =>
+        prev
+          ? {
+              ...prev,
+              calendarYear: auto.year,
+              calendarMonth: auto.month,
+              periodName: auto.periodName,
+              totalWorkingDays: auto.totalWorkingDays,
+              currentWorkingDay: auto.day,
+              dailyTargetOverrides: {},
+              dailyTargetNotes: {},
+              quickBoardNotes: {},
+              isSaturdayMode: false,
+            }
+          : prev
+      );
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config?.calendarYear, config?.calendarMonth, currentSedeId]);
 
   // Guardar en Supabase cuando config/sellers cambian LOCALMENTE (no por eco de Realtime)
   const [saveError, setSaveError] = useState(false);
@@ -165,10 +218,18 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
     );
   };
 
-  const handleUpdateDebitosTarget = (sellerId: string, target: number) => {
-    setSellers((prev) =>
-      prev.map((s) => (s.id === sellerId ? { ...s, debitosAutomaticosTarget: Math.max(0, target) } : s))
-    );
+  // Nota libre en una celda vacía de la Vista Rápida (no corresponde a ningún día real del mes)
+  const handleUpdateQuickBoardNote = (key: string, value: string) => {
+    setConfig((prev) => {
+      if (!prev) return prev;
+      const notes = { ...(prev.quickBoardNotes || {}) };
+      if (value.trim()) {
+        notes[key] = value;
+      } else {
+        delete notes[key];
+      }
+      return { ...prev, quickBoardNotes: notes };
+    });
   };
 
   const handleUpdateDayTarget = (dayNumber: number, target: number, note?: string) => {
@@ -263,24 +324,6 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
   const handleUpdateDailyTarget = (v: number) => setConfig((p) => (p ? { ...p, customDailyTarget: v } : p));
   const handleUpdateSaturdayTarget = (v: number) => setConfig((p) => (p ? { ...p, saturdayBranchTarget: v } : p));
   const handleToggleSaturdayMode = () => setConfig((p) => (p ? { ...p, isSaturdayMode: !p.isSaturdayMode } : p));
-
-  const handleAdvanceDay = () => {
-    setConfig((prev) => {
-      if (!prev) return prev;
-      const next = Math.min(prev.totalWorkingDays, prev.currentWorkingDay + 1);
-      setSelectedDay(next);
-      return { ...prev, currentWorkingDay: next };
-    });
-  };
-
-  const handleRewindDay = () => {
-    setConfig((prev) => {
-      if (!prev) return prev;
-      const prevDay = Math.max(1, prev.currentWorkingDay - 1);
-      setSelectedDay(prevDay);
-      return { ...prev, currentWorkingDay: prevDay };
-    });
-  };
 
   const handleSaveConfig = (newConfig: BranchConfig, newSellers: Seller[]) => {
     setConfig(newConfig);
@@ -428,8 +471,6 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
               onUpdateDailyTarget={handleUpdateDailyTarget}
               onUpdateSaturdayTarget={handleUpdateSaturdayTarget}
               onToggleSaturdayMode={handleToggleSaturdayMode}
-              onAdvanceDay={handleAdvanceDay}
-              onRewindDay={handleRewindDay}
               readOnly={!editable}
             />
 
@@ -447,7 +488,6 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
               onAddPeriodicSaleAndAdjustTarget={handleAddPeriodicSaleAndAdjustTarget}
               onUpdateArticulos={handleUpdateArticulos}
               onAdjustDebitosCount={handleAdjustDebitosCount}
-              onUpdateDebitosTarget={handleUpdateDebitosTarget}
               readOnly={!editable}
             />
 
@@ -462,7 +502,13 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
         ) : activeTab === 'vendedores' ? (
           <SellersDetailTab sellerMetrics={sellerMetrics} />
         ) : (
-          <QuickBoardView sellers={sellers} config={config} globalMetrics={globalMetrics} />
+          <QuickBoardView
+            sellers={sellers}
+            config={config}
+            globalMetrics={globalMetrics}
+            onUpdateNote={handleUpdateQuickBoardNote}
+            readOnly={!editable}
+          />
         )}
       </main>
 
@@ -476,6 +522,7 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
           onClose={() => setIsAdminOpen(false)}
           config={config}
           sellers={sellers}
+          sedeId={currentSedeId}
           onSaveConfig={handleSaveConfig}
           onResetTodaySales={handleResetTodaySales}
           onResetMonthSales={handleResetMonthSales}
