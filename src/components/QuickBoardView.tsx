@@ -8,6 +8,8 @@ interface QuickBoardViewProps {
   sellers: Seller[];
   config: BranchConfig;
   globalMetrics: GlobalCalculations;
+  onUpdateNote: (key: string, value: string) => void;
+  readOnly?: boolean;
 }
 
 interface DayCell {
@@ -21,13 +23,19 @@ interface DayCell {
 
 const COLUMN_LABELS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 
-export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config, globalMetrics }) => {
-  const { weeks, finalCumulativeTotal, finalCumulativeTarget } = useMemo(() => {
-    const { year, month } =
-      config.calendarYear && config.calendarMonth
-        ? { year: config.calendarYear, month: config.calendarMonth }
-        : parsePeriodString(config.periodName);
+export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
+  sellers,
+  config,
+  globalMetrics,
+  onUpdateNote,
+  readOnly = false,
+}) => {
+  const { year, month } =
+    config.calendarYear && config.calendarMonth
+      ? { year: config.calendarYear, month: config.calendarMonth }
+      : parsePeriodString(config.periodName);
 
+  const { weeks, finalCumulativeTotal, finalCumulativeTarget } = useMemo(() => {
     const allDays = getMonthDays(year, month);
 
     let runningTotal = 0;
@@ -57,10 +65,14 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config,
           ? config.saturdayBranchTarget || globalMetrics.saturdayTargetSede
           : config.customDailyTarget && config.customDailyTarget > 0
           ? config.customDailyTarget
-          : globalMetrics.dailyTargetSede;
+          : globalMetrics.baseDailyTarget; // objetivo parejo (no la tasa de "recuperación" del día de hoy)
 
       runningTotal += dayTotal;
-      runningTarget += dayTarget;
+      // El objetivo acumulado ("esperado") solo suma los días que YA pasaron (hasta hoy inclusive).
+      // Sumar días futuros infla el esperado por encima del objetivo mensual real.
+      if (d.dayNumber <= config.currentWorkingDay) {
+        runningTarget += dayTarget;
+      }
 
       currentWeek[colIndex] = {
         dayNumber: d.dayNumber,
@@ -78,6 +90,9 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config,
   }, [sellers, config, globalMetrics]);
 
   const sedePositive = finalCumulativeTotal >= finalCumulativeTarget;
+  const projectedPercent = globalMetrics.totalTarget > 0
+    ? (globalMetrics.projectedMonthEnd / globalMetrics.totalTarget) * 100
+    : 0;
 
   return (
     <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 sm:p-5">
@@ -106,13 +121,24 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config,
               <div key={weekIdx} className="grid grid-cols-6 gap-1.5">
                 {week.map((cell, colIdx) => {
                   if (!cell) {
-                    return <div key={colIdx} className="rounded-lg bg-zinc-950/30 border border-zinc-900 min-h-[72px]" />;
+                    const noteKey = `${year}-${month}-w${weekIdx}c${colIdx}`;
+                    const noteValue = config.quickBoardNotes?.[noteKey] || '';
+                    return (
+                      <textarea
+                        key={colIdx}
+                        defaultValue={noteValue}
+                        disabled={readOnly}
+                        onBlur={(e) => onUpdateNote(noteKey, e.target.value)}
+                        placeholder={readOnly ? '' : 'Nota libre...'}
+                        className="rounded-lg bg-zinc-950/30 border border-zinc-900 min-h-[104px] p-2 text-[11px] text-zinc-300 placeholder-zinc-700 resize-none focus:outline-none focus:border-yellow-400 focus:bg-zinc-950/60 disabled:cursor-default transition"
+                      />
+                    );
                   }
 
                   const isCurrent = cell.dayNumber === config.currentWorkingDay;
                   const hasData = cell.dayTotal > 0;
                   const dayPositive = cell.dayTotal >= cell.dayTarget;
-                  const cumulativeHasData = cell.cumulativeTotal > 0 || cell.dayNumber <= config.currentWorkingDay;
+                  const cumulativeHasData = cell.dayNumber <= config.currentWorkingDay;
                   const cumulativeDelta = cell.cumulativeTotal - cell.cumulativeTarget;
                   const cumulativePositive = cumulativeDelta >= 0;
 
@@ -199,14 +225,20 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config,
           <span className="text-lg font-bold text-zinc-100">{formatARS(finalCumulativeTotal)}</span>
           <span className="text-xs text-zinc-600 ml-2">de {formatARS(finalCumulativeTarget)} esperado</span>
         </div>
-        <span
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold ${
-            sedePositive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-          }`}
-        >
-          {sedePositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-          {sedePositive ? 'Arriba de lo esperado' : 'Abajo de lo esperado'}
-        </span>
+        <div className="text-right">
+          <span
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold ${
+              sedePositive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+            }`}
+          >
+            {sedePositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+            {sedePositive ? 'Arriba de lo esperado' : 'Abajo de lo esperado'}
+          </span>
+          <div className="text-[11px] text-zinc-500 mt-1">
+            Proyección de cierre: <strong className="text-zinc-300 font-mono">{formatARS(globalMetrics.projectedMonthEnd)}</strong>
+            <span className="ml-1">({projectedPercent.toFixed(1)}% del objetivo)</span>
+          </div>
+        </div>
       </div>
     </div>
   );
