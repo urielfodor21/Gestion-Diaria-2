@@ -8,6 +8,7 @@ import { DailyClosingBoard } from './components/DailyClosingBoard';
 import { DailySalesHistoryTable } from './components/DailySalesHistoryTable';
 import { AdminPanel } from './components/AdminPanel';
 import { SellersDetailTab } from './components/SellersDetailTab';
+import { QuickBoardView } from './components/QuickBoardView';
 import { SedeSwitcher } from './components/SedeSwitcher';
 import { UserManagementPanel } from './components/UserManagementPanel';
 import { LoginScreen } from './components/LoginScreen';
@@ -15,7 +16,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { fetchAccessibleSedes, fetchSede, saveSede, subscribeToSede, createSede } from './lib/sedeData';
 import { ROLE_LABELS, canEditTargets as canEditTargetsFn, canManageUsers as canManageUsersFn } from './lib/roles';
 
-type Tab = 'pizarra' | 'vendedores';
+type Tab = 'pizarra' | 'vendedores' | 'vista-rapida';
 
 const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAuth>['profile']>; signOut: () => Promise<void> }> = ({
   profile,
@@ -139,6 +140,34 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
           todaySales: isCurrentDay ? exactAmount : s.todaySales || 0,
         };
       })
+    );
+  };
+
+  // Venta en Artículos: desglose informativo de cuánto de la venta YA cargada fue en artículos.
+  // No modifica dailySalesHistory ni currentSales — es solo para poder verlo aparte.
+  const handleUpdateArticulos = (sellerId: string, dayNumber: number, amount: number) => {
+    setSellers((prev) =>
+      prev.map((s) => {
+        if (s.id !== sellerId) return s;
+        return { ...s, articulosHistory: { ...(s.articulosHistory || {}), [dayNumber]: amount } };
+      })
+    );
+  };
+
+  // Débitos Automáticos por vendedor: solo cuenta cantidad de operaciones, no suma montos al total
+  const handleAdjustDebitosCount = (sellerId: string, delta: number) => {
+    setSellers((prev) =>
+      prev.map((s) => {
+        if (s.id !== sellerId) return s;
+        const nextCount = Math.max(0, (s.debitosAutomaticosCount || 0) + delta);
+        return { ...s, debitosAutomaticosCount: nextCount };
+      })
+    );
+  };
+
+  const handleUpdateDebitosTarget = (sellerId: string, target: number) => {
+    setSellers((prev) =>
+      prev.map((s) => (s.id === sellerId ? { ...s, debitosAutomaticosTarget: Math.max(0, target) } : s))
     );
   };
 
@@ -377,6 +406,15 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
           >
             Vendedores
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('vista-rapida')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+              activeTab === 'vista-rapida' ? 'bg-yellow-400 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            Vista Rápida
+          </button>
         </div>
       </div>
 
@@ -407,6 +445,9 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
               onResetDayTarget={handleResetDayTarget}
               onAddSeller={handleAddSeller}
               onAddPeriodicSaleAndAdjustTarget={handleAddPeriodicSaleAndAdjustTarget}
+              onUpdateArticulos={handleUpdateArticulos}
+              onAdjustDebitosCount={handleAdjustDebitosCount}
+              onUpdateDebitosTarget={handleUpdateDebitosTarget}
               readOnly={!editable}
             />
 
@@ -418,8 +459,10 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
               onUpdateDailySale={handleUpdateDailySale}
             />
           </>
-        ) : (
+        ) : activeTab === 'vendedores' ? (
           <SellersDetailTab sellerMetrics={sellerMetrics} />
+        ) : (
+          <QuickBoardView sellers={sellers} config={config} globalMetrics={globalMetrics} />
         )}
       </main>
 
