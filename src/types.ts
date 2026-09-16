@@ -12,8 +12,9 @@ export interface Seller {
   // Venta en Artículos: es un desglose INFORMATIVO de cuánto de la venta ya cargada
   // corresponde a artículos. NO se suma aparte del total (ya está incluido en dailySalesHistory).
   articulosHistory?: Record<number, number>; // { [día]: montoEnArtículosEseDía }
+  articulosTarget?: number; // Objetivo MENSUAL de venta en artículos ($ ARS) para este vendedor
   // Débitos Automáticos por vendedor: objetivo y conteo de operaciones (no montos, solo cantidad)
-  debitosAutomaticosTarget?: number; // Objetivo de cantidad de Débitos Automáticos para este vendedor
+  debitosAutomaticosTarget?: number; // Objetivo MENSUAL de cantidad de Débitos Automáticos para este vendedor
   debitosAutomaticosCount?: number;  // Cantidad acumulada de Débitos Automáticos cargados
 }
 
@@ -31,6 +32,7 @@ export interface BranchConfig {
   saturdayBranchTarget?: number;// Objetivo especial de la sede para el día sábado ($ ARS)
   dailyTargetOverrides?: Record<number, number>; // { [dayNumber]: objetivoEspecialDelDia }
   dailyTargetNotes?: Record<number, string>;     // { [dayNumber]: "Débitos Automáticos" | "Gympass" | nota }
+  quickBoardNotes?: Record<string, string>;       // Notas libres en las celdas vacías de la Vista Rápida (clave: "año-mes-semana-columna")
 }
 
 export interface DailyCloseEntry {
@@ -120,4 +122,12 @@ export interface SedeSummary {
   id: string;
   name: string;
   updatedAt?: string;
+}
+
+export interface SedeHistoryEntry {
+  id: string;
+  year: number;
+  month: number;
+  branchName: string;
+  archivedAt: string;
 }
