@@ -9,6 +9,12 @@ export interface Seller {
   dailySalesHistory: Record<number, number>; // Ventas cargadas día por día { [díaLaborable]: montoExacto }
   transactionsCount: number;
   isPeriodicChannel?: boolean; // Canal de liquidación única/puntual (ej. Débitos o Gympass) sin meta diaria dividida
+  // Venta en Artículos: es un desglose INFORMATIVO de cuánto de la venta ya cargada
+  // corresponde a artículos. NO se suma aparte del total (ya está incluido en dailySalesHistory).
+  articulosHistory?: Record<number, number>; // { [día]: montoEnArtículosEseDía }
+  // Débitos Automáticos por vendedor: objetivo y conteo de operaciones (no montos, solo cantidad)
+  debitosAutomaticosTarget?: number; // Objetivo de cantidad de Débitos Automáticos para este vendedor
+  debitosAutomaticosCount?: number;  // Cantidad acumulada de Débitos Automáticos cargados
 }
 
 export interface BranchConfig {
