@@ -10,30 +10,43 @@ interface QuickBoardViewProps {
   globalMetrics: GlobalCalculations;
 }
 
-interface DayRow {
+interface DayCell {
   dayNumber: number;
-  label: string; // "1 Mar", "2 Mié", etc.
-  isSunday: boolean;
   isSaturday: boolean;
   dayTotal: number;
   dayTarget: number;
-  cumulativeTotal: number;
+  cumulativeTotal: number; // acumulado de la sede HASTA este día (incluido)
   cumulativeTarget: number;
 }
 
+const COLUMN_LABELS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
 export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config, globalMetrics }) => {
-  const rows: DayRow[] = useMemo(() => {
+  const { weeks, finalCumulativeTotal, finalCumulativeTarget } = useMemo(() => {
     const { year, month } =
       config.calendarYear && config.calendarMonth
         ? { year: config.calendarYear, month: config.calendarMonth }
         : parsePeriodString(config.periodName);
 
-    const monthDays = getMonthDays(year, month).filter((d) => d.isWorkingDay); // sin domingos
+    const allDays = getMonthDays(year, month);
 
     let runningTotal = 0;
     let runningTarget = 0;
 
-    return monthDays.map((d) => {
+    const weeksResult: (DayCell | null)[][] = [];
+    let currentWeek: (DayCell | null)[] = new Array(6).fill(null);
+    let weekStarted = false;
+
+    for (const d of allDays) {
+      if (d.isSunday) continue; // La sede no opera los domingos: sin columna para ese día
+
+      const colIndex = d.dayOfWeek - 1; // Lunes(1)->0 ... Sábado(6)->5
+
+      if (colIndex === 0 && weekStarted) {
+        weeksResult.push(currentWeek);
+        currentWeek = new Array(6).fill(null);
+      }
+
       const dayTotal = sellers.reduce((acc, s) => acc + (Number(s.dailySalesHistory?.[d.dayNumber]) || 0), 0);
 
       const override = config.dailyTargetOverrides?.[d.dayNumber];
@@ -49,18 +62,22 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config,
       runningTotal += dayTotal;
       runningTarget += dayTarget;
 
-      return {
+      currentWeek[colIndex] = {
         dayNumber: d.dayNumber,
-        label: `${d.dayNumber} ${d.shortDayName}`,
-        isSunday: d.isSunday,
         isSaturday: d.isSaturday,
         dayTotal,
         dayTarget,
         cumulativeTotal: runningTotal,
         cumulativeTarget: runningTarget,
       };
-    });
+      weekStarted = true;
+    }
+    if (weekStarted) weeksResult.push(currentWeek);
+
+    return { weeks: weeksResult, finalCumulativeTotal: runningTotal, finalCumulativeTarget: runningTarget };
   }, [sellers, config, globalMetrics]);
+
+  const sedePositive = finalCumulativeTotal >= finalCumulativeTarget;
 
   return (
     <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 sm:p-5">
@@ -69,64 +86,90 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({ sellers, config,
         <h2 className="text-sm font-bold text-zinc-200">Vista Rápida — Pizarrón del Mes</h2>
       </div>
       <p className="text-[11px] text-zinc-600 mb-4">
-        Solo lectura: un vistazo a todos los días del mes, con el total de cada día y el acumulado de la sede.
+        Solo lectura: un vistazo tipo calendario a todo el mes, con el total vendido cada día.
       </p>
 
       <div className="overflow-x-auto -mx-2 px-2">
-        <table className="w-full text-sm border-separate" style={{ borderSpacing: 0 }}>
-          <thead>
-            <tr className="text-left text-[11px] font-bold text-zinc-500">
-              <th className="py-2 pr-3 sticky left-0 bg-zinc-900/95">Día</th>
-              <th className="py-2 pr-3 text-right">Total del Día</th>
-              <th className="py-2 pr-3 text-right">Objetivo del Día</th>
-              <th className="py-2 pr-3 text-right">Acumulado Sede</th>
-              <th className="py-2 pr-3 text-right">Objetivo Acumulado</th>
-              <th className="py-2 pr-2 text-right">Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const isCurrent = r.dayNumber === config.currentWorkingDay;
-              const cumulativePositive = r.cumulativeTotal >= r.cumulativeTarget;
-              const hasAnyData = r.dayTotal > 0 || r.dayNumber <= config.currentWorkingDay;
+        <div className="min-w-[640px]">
+          {/* Encabezado de columnas (días de la semana) */}
+          <div className="grid grid-cols-6 gap-1.5 mb-1.5">
+            {COLUMN_LABELS.map((label) => (
+              <div key={label} className="text-center text-[11px] font-bold text-zinc-500 py-1">
+                {label}
+              </div>
+            ))}
+          </div>
 
-              return (
-                <tr
-                  key={r.dayNumber}
-                  className={`border-b border-zinc-900 ${isCurrent ? 'bg-yellow-400/5' : ''}`}
-                >
-                  <td className={`py-2 pr-3 sticky left-0 ${isCurrent ? 'bg-zinc-900' : 'bg-zinc-950/40'} font-semibold`}>
-                    <span className={isCurrent ? 'text-yellow-400' : 'text-zinc-300'}>{r.label}</span>
-                    {r.isSaturday && <span className="ml-1.5 text-[10px] text-zinc-600">Sáb</span>}
-                  </td>
-                  <td className="py-2 pr-3 text-right text-zinc-200">
-                    {r.dayTotal > 0 ? formatARS(r.dayTotal) : <span className="text-zinc-700">—</span>}
-                  </td>
-                  <td className="py-2 pr-3 text-right text-zinc-500">{formatARS(r.dayTarget)}</td>
-                  <td className="py-2 pr-3 text-right font-semibold text-zinc-100">
-                    {hasAnyData ? formatARS(r.cumulativeTotal) : <span className="text-zinc-700">—</span>}
-                  </td>
-                  <td className="py-2 pr-3 text-right text-zinc-500">{formatARS(r.cumulativeTarget)}</td>
-                  <td className="py-2 pr-2 text-right">
-                    {hasAnyData && (
-                      <span
-                        className={`inline-flex items-center gap-1 text-xs font-bold ${
-                          cumulativePositive ? 'text-green-400' : 'text-red-400'
-                        }`}
-                      >
-                        {cumulativePositive ? (
-                          <TrendingUp className="h-3.5 w-3.5" />
+          {/* Filas: una por semana */}
+          <div className="space-y-1.5">
+            {weeks.map((week, weekIdx) => (
+              <div key={weekIdx} className="grid grid-cols-6 gap-1.5">
+                {week.map((cell, colIdx) => {
+                  if (!cell) {
+                    return <div key={colIdx} className="rounded-lg bg-zinc-950/30 border border-zinc-900 min-h-[72px]" />;
+                  }
+
+                  const isCurrent = cell.dayNumber === config.currentWorkingDay;
+                  const hasData = cell.dayTotal > 0;
+                  const dayPositive = cell.dayTotal >= cell.dayTarget;
+
+                  return (
+                    <div
+                      key={colIdx}
+                      title={`Día ${cell.dayNumber}: ${formatARS(cell.dayTotal)} de ${formatARS(cell.dayTarget)} — Acumulado a la fecha: ${formatARS(cell.cumulativeTotal)}`}
+                      className={`rounded-lg border min-h-[72px] p-2 flex flex-col justify-between transition ${
+                        isCurrent
+                          ? 'border-yellow-400 bg-yellow-400/10'
+                          : hasData
+                          ? dayPositive
+                            ? 'border-emerald-800/60 bg-emerald-500/10'
+                            : 'border-rose-800/60 bg-rose-500/10'
+                          : 'border-zinc-800 bg-zinc-950/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[11px] font-bold ${isCurrent ? 'text-yellow-400' : 'text-zinc-400'}`}>
+                          {cell.dayNumber}
+                        </span>
+                        {cell.isSaturday && <span className="text-[9px] text-zinc-600">Sáb</span>}
+                      </div>
+                      <div className="text-right">
+                        {hasData ? (
+                          <span
+                            className={`text-[11px] font-mono font-bold ${
+                              dayPositive ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {formatARS(cell.dayTotal)}
+                          </span>
                         ) : (
-                          <TrendingDown className="h-3.5 w-3.5" />
+                          <span className="text-[11px] text-zinc-700">—</span>
                         )}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Resumen: acumulado total de la sede */}
+      <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <span className="text-[11px] text-zinc-500 block">Acumulado Sede (a la fecha)</span>
+          <span className="text-lg font-bold text-zinc-100">{formatARS(finalCumulativeTotal)}</span>
+          <span className="text-xs text-zinc-600 ml-2">de {formatARS(finalCumulativeTarget)} esperado</span>
+        </div>
+        <span
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold ${
+            sedePositive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+          }`}
+        >
+          {sedePositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+          {sedePositive ? 'Arriba de lo esperado' : 'Abajo de lo esperado'}
+        </span>
       </div>
     </div>
   );
