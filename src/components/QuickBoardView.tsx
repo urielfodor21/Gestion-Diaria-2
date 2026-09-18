@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { LayoutGrid, TrendingUp, TrendingDown } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { LayoutGrid, TrendingUp, TrendingDown, RotateCcw } from 'lucide-react';
 import { BranchConfig, GlobalCalculations, Seller } from '../types';
 import { formatARS } from '../utils/formatters';
 import { getMonthDays, parsePeriodString } from '../utils/calendar';
@@ -35,7 +35,11 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
       ? { year: config.calendarYear, month: config.calendarMonth }
       : parsePeriodString(config.periodName);
 
-  const { weeks, finalCumulativeTotal, finalCumulativeTarget } = useMemo(() => {
+  // Día que se usa como referencia para la proyección de cierre.
+  // null = usar el día actual real de la sede (config.currentWorkingDay).
+  const [asOfDay, setAsOfDay] = useState<number | null>(null);
+
+  const { weeks, finalCumulativeTotal, finalCumulativeTarget, cellsByDay } = useMemo(() => {
     const allDays = getMonthDays(year, month);
 
     let runningTotal = 0;
@@ -44,6 +48,7 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
     const weeksResult: (DayCell | null)[][] = [];
     let currentWeek: (DayCell | null)[] = new Array(6).fill(null);
     let weekStarted = false;
+    const cellsByDayResult: Record<number, DayCell> = {};
 
     for (const d of allDays) {
       if (d.isSunday) continue; // La sede no opera los domingos: sin columna para ese día
@@ -74,7 +79,7 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
         runningTarget += dayTarget;
       }
 
-      currentWeek[colIndex] = {
+      const cell: DayCell = {
         dayNumber: d.dayNumber,
         isSaturday: d.isSaturday,
         dayTotal,
@@ -82,17 +87,39 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
         cumulativeTotal: runningTotal,
         cumulativeTarget: runningTarget,
       };
+
+      currentWeek[colIndex] = cell;
+      cellsByDayResult[d.dayNumber] = cell;
       weekStarted = true;
     }
     if (weekStarted) weeksResult.push(currentWeek);
 
-    return { weeks: weeksResult, finalCumulativeTotal: runningTotal, finalCumulativeTarget: runningTarget };
+    return {
+      weeks: weeksResult,
+      finalCumulativeTotal: runningTotal,
+      finalCumulativeTarget: runningTarget,
+      cellsByDay: cellsByDayResult,
+    };
   }, [sellers, config, globalMetrics]);
 
-  const sedePositive = finalCumulativeTotal >= finalCumulativeTarget;
-  const projectedPercent = globalMetrics.totalTarget > 0
-    ? (globalMetrics.projectedMonthEnd / globalMetrics.totalTarget) * 100
-    : 0;
+  // Día efectivo usado para la proyección: el elegido por click, o el día actual real por defecto.
+  const effectiveAsOfDay = asOfDay ?? config.currentWorkingDay;
+  const asOfCell = cellsByDay[effectiveAsOfDay];
+  const asOfTotal = asOfCell ? asOfCell.cumulativeTotal : finalCumulativeTotal;
+  const asOfTarget = asOfCell ? asOfCell.cumulativeTarget : finalCumulativeTarget;
+  const isCustomAsOf = asOfDay !== null && asOfDay !== config.currentWorkingDay;
+
+  const sedePositive = asOfTotal >= asOfTarget;
+
+  // Proyección de cierre: se calcula como el objetivo total escalado por el % de cumplimiento
+  // respecto de lo esperado a la fecha. Así, si estás arriba de lo esperado, la proyección
+  // queda matemáticamente arriba del 100% (antes usaba una tasa diaria promedio que no
+  // guardaba relación directa con el "esperado" y podía dar resultados contradictorios).
+  const totalTarget = globalMetrics.totalTarget || 0;
+  const performanceRatio = asOfTarget > 0 ? asOfTotal / asOfTarget : 0;
+  const projectedMonthEndLocal =
+    totalTarget > 0 ? Math.round(totalTarget * performanceRatio) : globalMetrics.projectedMonthEnd;
+  const projectedPercentLocal = totalTarget > 0 ? performanceRatio * 100 : 0;
 
   return (
     <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 sm:p-5">
@@ -101,7 +128,8 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
         <h2 className="text-sm font-bold text-zinc-200">Vista Rápida — Pizarrón del Mes</h2>
       </div>
       <p className="text-[11px] text-zinc-600 mb-4">
-        Solo lectura: un vistazo tipo calendario a todo el mes, con el total vendido cada día.
+        Un vistazo tipo calendario a todo el mes. Hacé click en un día ya cargado para ver la
+        proyección de cierre como si ese fuera el último día con ventas.
       </p>
 
       <div className="overflow-x-auto -mx-2 px-2">
@@ -135,19 +163,29 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
                     );
                   }
 
-                  const isCurrent = cell.dayNumber === config.currentWorkingDay;
+                  const isToday = cell.dayNumber === config.currentWorkingDay;
+                  const isSelected = cell.dayNumber === asOfDay;
                   const hasData = cell.dayTotal > 0;
                   const dayPositive = cell.dayTotal >= cell.dayTarget;
                   const cumulativeHasData = cell.dayNumber <= config.currentWorkingDay;
                   const cumulativeDelta = cell.cumulativeTotal - cell.cumulativeTarget;
                   const cumulativePositive = cumulativeDelta >= 0;
+                  const clickable = cumulativeHasData;
 
                   return (
                     <div
                       key={colIdx}
-                      title={`Día ${cell.dayNumber}: ${formatARS(cell.dayTotal)} de ${formatARS(cell.dayTarget)} — Acumulado a la fecha: ${formatARS(cell.cumulativeTotal)}`}
+                      onClick={() => {
+                        if (!clickable) return;
+                        setAsOfDay((prev) => (prev === cell.dayNumber ? null : cell.dayNumber));
+                      }}
+                      title={`Día ${cell.dayNumber}: ${formatARS(cell.dayTotal)} de ${formatARS(cell.dayTarget)} — Acumulado a la fecha: ${formatARS(cell.cumulativeTotal)}${clickable ? ' (click para usar como referencia de proyección)' : ''}`}
                       className={`rounded-lg border min-h-[104px] p-2 flex flex-col justify-between gap-1 transition ${
-                        isCurrent
+                        clickable ? 'cursor-pointer hover:border-sky-400/60' : ''
+                      } ${
+                        isSelected
+                          ? 'border-sky-400 ring-1 ring-sky-400 bg-sky-400/10'
+                          : isToday
                           ? 'border-yellow-400 bg-yellow-400/10'
                           : hasData
                           ? dayPositive
@@ -157,7 +195,11 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className={`text-[11px] font-bold ${isCurrent ? 'text-yellow-400' : 'text-zinc-400'}`}>
+                        <span
+                          className={`text-[11px] font-bold ${
+                            isSelected ? 'text-sky-400' : isToday ? 'text-yellow-400' : 'text-zinc-400'
+                          }`}
+                        >
                           {cell.dayNumber}
                         </span>
                         {cell.isSaturday && <span className="text-[9px] text-zinc-600">Sáb</span>}
@@ -218,25 +260,40 @@ export const QuickBoardView: React.FC<QuickBoardViewProps> = ({
         </div>
       </div>
 
-      {/* Resumen: acumulado total de la sede */}
+      {/* Resumen: acumulado total de la sede + proyección */}
       <div className="mt-4 pt-4 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <span className="text-[11px] text-zinc-500 block">Acumulado Sede (a la fecha)</span>
-          <span className="text-lg font-bold text-zinc-100">{formatARS(finalCumulativeTotal)}</span>
-          <span className="text-xs text-zinc-600 ml-2">de {formatARS(finalCumulativeTarget)} esperado</span>
+          <span className="text-[11px] text-zinc-500 block">
+            Acumulado Sede {isCustomAsOf ? `(al día ${effectiveAsOfDay})` : '(a la fecha)'}
+          </span>
+          <span className="text-lg font-bold text-zinc-100">{formatARS(asOfTotal)}</span>
+          <span className="text-xs text-zinc-600 ml-2">de {formatARS(asOfTarget)} esperado</span>
+          {isCustomAsOf && (
+            <button
+              type="button"
+              onClick={() => setAsOfDay(null)}
+              className="ml-3 inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 transition"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Ver hoy (día {config.currentWorkingDay})
+            </button>
+          )}
         </div>
         <div className="text-right">
           <span
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold ${
-              sedePositive ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+              sedePositive
+                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
             }`}
           >
             {sedePositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
             {sedePositive ? 'Arriba de lo esperado' : 'Abajo de lo esperado'}
           </span>
           <div className="text-[11px] text-zinc-500 mt-1">
-            Proyección de cierre: <strong className="text-zinc-300 font-mono">{formatARS(globalMetrics.projectedMonthEnd)}</strong>
-            <span className="ml-1">({projectedPercent.toFixed(1)}% del objetivo)</span>
+            Proyección de cierre: <strong className="text-zinc-300 font-mono">{formatARS(projectedMonthEndLocal)}</strong>
+            <span className="ml-1">({projectedPercentLocal.toFixed(1)}% del objetivo)</span>
+            {isCustomAsOf && <span className="block text-zinc-600">(calculada al día {effectiveAsOfDay})</span>}
           </div>
         </div>
       </div>
