@@ -98,9 +98,16 @@ export const calculateSellerMetrics = (
   const todayVariance = todaySalesValue - todayGoal;
   const isTodayPositive = todayVariance >= 0;
 
-  // Proyección de cierre de mes para este vendedor según su ritmo diario actual
+  // Proyección de cierre de mes para este vendedor: se escala el objetivo mensual por el
+  // % de cumplimiento respecto de lo esperado a la fecha (mismo criterio que "Vista Rápida").
+  // Así, estar arriba de lo esperado implica necesariamente proyectar arriba del 100%.
+  // Antes se usaba una tasa diaria promedio (ventas / día actual * días totales) que no
+  // guardaba relación directa con "lo esperado" y podía dar resultados contradictorios
+  // (ej: ir arriba del ritmo esperado pero proyectar un cierre por debajo del objetivo).
   const currentDailyRate = currentWorkingDay > 0 ? sales / currentWorkingDay : 0;
-  const projectedMonthEnd = Math.round(currentDailyRate * totalWorkingDays);
+  const linearProjection = Math.round(currentDailyRate * totalWorkingDays);
+  const performanceRatio = expectedSalesToDate > 0 ? sales / expectedSalesToDate : null;
+  const projectedMonthEnd = performanceRatio !== null ? Math.round(target * performanceRatio) : linearProjection;
 
   return {
     seller,
@@ -226,9 +233,16 @@ export const calculateGlobalMetrics = (
   const todaySedeVariance = totalTodaySales - todaySedeGoal;
   const isTodaySedePositive = todaySedeVariance >= 0;
 
-  // Proyección de cierre de mes según ritmo diario actual
+  // Proyección de cierre de mes: se escala el objetivo total por el % de cumplimiento
+  // respecto de lo esperado a la fecha (mismo criterio que "Vista Rápida" y que cada
+  // vendedor individual). Antes se usaba una tasa diaria promedio que no guardaba relación
+  // directa con "lo esperado" y podía mostrar, por ejemplo, "arriba de lo esperado" junto
+  // con una proyección de cierre por debajo del 100% del objetivo — una contradicción.
   const currentDailyRate = currentWorkingDay > 0 ? totalSales / currentWorkingDay : 0;
-  const projectedMonthEnd = Math.round(currentDailyRate * totalWorkingDays);
+  const linearProjection = Math.round(currentDailyRate * totalWorkingDays);
+  const performanceRatio = expectedSalesToDate > 0 ? totalSales / expectedSalesToDate : null;
+  const projectedMonthEnd =
+    performanceRatio !== null ? Math.round(effectiveGlobalTarget * performanceRatio) : linearProjection;
 
   return {
     totalTarget: effectiveGlobalTarget,
