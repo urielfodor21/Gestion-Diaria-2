@@ -11,6 +11,9 @@ export const SellersDetailTab: React.FC<SellersDetailTabProps> = ({ sellerMetric
   // Los canales periódicos (Débitos/Gympass) no tienen objetivo diario dividido; se muestran con "—" en esas columnas
   const sorted = [...sellerMetrics].sort((a, b) => b.completionPercent - a.completionPercent);
 
+  const projectedPercentOf = (m: SellerCalculations) =>
+    m.seller.individualTarget > 0 ? (m.projectedMonthEnd / m.seller.individualTarget) * 100 : 0;
+
   return (
     <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 sm:p-5">
       <div className="flex items-center gap-2 mb-4">
@@ -62,7 +65,14 @@ export const SellersDetailTab: React.FC<SellersDetailTabProps> = ({ sellerMetric
                   </span>
                 </td>
                 <td className="py-2.5 pr-3 text-right text-zinc-200">
-                  {m.seller.isPeriodicChannel ? '—' : formatARS(m.projectedMonthEnd)}
+                  {m.seller.isPeriodicChannel ? (
+                    '—'
+                  ) : (
+                    <>
+                      {formatARS(m.projectedMonthEnd)}
+                      <span className="text-zinc-500 ml-1">({projectedPercentOf(m).toFixed(1)}%)</span>
+                    </>
+                  )}
                 </td>
                 <td className="py-2.5 pr-3 text-right text-yellow-400 font-semibold">
                   {m.seller.isPeriodicChannel ? '—' : formatARS(m.dailyTarget100)}
@@ -103,7 +113,10 @@ export const SellersDetailTab: React.FC<SellersDetailTabProps> = ({ sellerMetric
               {!m.seller.isPeriodicChannel && (
                 <>
                   <span className="text-zinc-500">Proyección cierre</span>
-                  <span className="text-right text-zinc-200">{formatARS(m.projectedMonthEnd)}</span>
+                  <span className="text-right text-zinc-200">
+                    {formatARS(m.projectedMonthEnd)}
+                    <span className="text-zinc-500 ml-1">({projectedPercentOf(m).toFixed(1)}%)</span>
+                  </span>
 
                   <span className="text-zinc-500">Objetivo diario estimado</span>
                   <span className="text-right text-yellow-400 font-semibold">{formatARS(m.dailyTarget100)}</span>
