@@ -2,6 +2,37 @@ import { BranchConfig, GlobalCalculations, Seller, SellerCalculations } from '..
 import { isDaySaturday, isDaySunday, parsePeriodString, countSundays, countSaturdays } from './calendar';
 
 /**
+ * Calcula, día por día, cuánto se esperaba vender hasta el día actual (inclusive),
+ * respetando los objetivos especiales de cada día (sábados con objetivo propio y
+ * anulaciones manuales) — el mismo criterio, día a día, que usa la grilla de
+ * "Vista Rápida". Un reparto parejo (objetivo ÷ días totales × días transcurridos)
+ * no sirve como referencia porque no refleja que los sábados suelen tener un
+ * objetivo distinto (normalmente menor), y eso hacía que "lo esperado" (y todo lo
+ * que depende de él: el estado arriba/abajo, y la proyección de cierre) no
+ * coincidiera entre la Pantalla Principal, Vendedores y Vista Rápida.
+ */
+const calculateWeightedExpected = (
+  year: number,
+  month: number,
+  uptoDay: number,
+  weekdayTarget: number,
+  saturdayTarget: number,
+  overrides?: Record<number, number>
+): number => {
+  let expected = 0;
+  for (let day = 1; day <= uptoDay; day++) {
+    if (isDaySunday(day, year, month)) continue;
+    const override = overrides?.[day];
+    if (override !== undefined && override > 0) {
+      expected += override;
+      continue;
+    }
+    expected += isDaySaturday(day, year, month) ? saturdayTarget : weekdayTarget;
+  }
+  return expected;
+};
+
+/**
  * Calcula las métricas individuales de cada vendedor:
  * - % alcanzado
  * - % esperado según día actual transcurrido
@@ -27,27 +58,12 @@ export const calculateSellerMetrics = (
     Object.values(history).reduce((acc: number, v: number) => acc + (Number(v) || 0), 0)
   );
   const todaySalesValue = Number(history[currentWorkingDay]) || 0;
-  
+
   // Días restantes para el cálculo del ritmo diario (mínimo 1)
   const remainingDays = Math.max(1, totalWorkingDays - currentWorkingDay);
 
   // 1. Porcentaje total alcanzado
   const completionPercent = (sales / target) * 100;
-
-  // 2. Porcentaje esperado según los días transcurridos
-  const expectedPercent = totalWorkingDays > 0 ? (currentWorkingDay / totalWorkingDays) * 100 : 0;
-
-  // 3. Venta esperada en pesos al día de hoy
-  const expectedSalesToDate = (target * expectedPercent) / 100;
-
-  // 4. Desvío por sobre o por debajo de la venta esperada a la fecha
-  const pacingVarianceAmount = sales - expectedSalesToDate;
-  const pacingVariancePercent = completionPercent - expectedPercent;
-  const isPacingPositive = pacingVarianceAmount >= 0;
-
-  // 5. Diferencia total contra la meta
-  const diffTotalTarget = sales - target;
-  const isTargetSurpassed = sales >= target;
 
   // Canales periódicos/lump sum (Débitos, Gympass) no tienen objetivo diario dividido
   const isPeriodic = seller.isPeriodicChannel ||
@@ -55,8 +71,35 @@ export const calculateSellerMetrics = (
     seller.name.toLowerCase().includes('debito') ||
     seller.name.toLowerCase().includes('gympass');
 
-  // 6. Objetivo diario base (promedio general del mes)
+  // 2. Objetivo diario base (promedio general del mes)
   const baseDailyTarget = isPeriodic || totalWorkingDays <= 0 ? 0 : Math.round(target / totalWorkingDays);
+
+  // Detección de día sábado o domingo según calendario
+  const { year, month } = config.calendarYear && config.calendarMonth
+    ? { year: config.calendarYear, month: config.calendarMonth }
+    : parsePeriodString(config.periodName);
+  const isTodaySat = isSaturdayMode || isDaySaturday(currentWorkingDay, year, month);
+  const isTodaySun = isDaySunday(currentWorkingDay, year, month);
+
+  // Objetivo específico de sábado
+  const saturdayTarget = isPeriodic ? 0 : (seller.saturdayTarget || Math.round(baseDailyTarget * 0.6));
+
+  // 3. Venta esperada en pesos al día de hoy — sumando día por día, respetando sábados
+  const expectedSalesToDate = isPeriodic
+    ? 0
+    : calculateWeightedExpected(year, month, currentWorkingDay, baseDailyTarget, saturdayTarget);
+
+  // 4. Porcentaje esperado según lo ya calculado arriba (consistente con expectedSalesToDate)
+  const expectedPercent = target > 0 ? (expectedSalesToDate / target) * 100 : 0;
+
+  // 5. Desvío por sobre o por debajo de la venta esperada a la fecha
+  const pacingVarianceAmount = sales - expectedSalesToDate;
+  const pacingVariancePercent = completionPercent - expectedPercent;
+  const isPacingPositive = pacingVarianceAmount >= 0;
+
+  // 6. Diferencia total contra la meta
+  const diffTotalTarget = sales - target;
+  const isTargetSurpassed = sales >= target;
 
   // 7. Metas al 100% y al 140%
   const isTarget100Surpassed = sales >= target;
@@ -72,16 +115,6 @@ export const calculateSellerMetrics = (
   const dailyTarget140 = isPeriodic || isTarget140Surpassed
     ? 0
     : Math.max(0, Math.round((target140Total - sales) / remainingDays));
-
-  // Objetivo específico de sábado
-  const saturdayTarget = isPeriodic ? 0 : (seller.saturdayTarget || Math.round(baseDailyTarget * 0.6));
-
-  // Detección de día sábado o domingo según calendario
-  const { year, month } = config.calendarYear && config.calendarMonth
-    ? { year: config.calendarYear, month: config.calendarMonth }
-    : parsePeriodString(config.periodName);
-  const isTodaySat = isSaturdayMode || isDaySaturday(currentWorkingDay, year, month);
-  const isTodaySun = isDaySunday(currentWorkingDay, year, month);
 
   // Meta específica del día de hoy
   let todayGoal = 0;
@@ -99,11 +132,8 @@ export const calculateSellerMetrics = (
   const isTodayPositive = todayVariance >= 0;
 
   // Proyección de cierre de mes para este vendedor: se escala el objetivo mensual por el
-  // % de cumplimiento respecto de lo esperado a la fecha (mismo criterio que "Vista Rápida").
+  // % de cumplimiento respecto de lo esperado a la fecha (ya calculado día por día arriba).
   // Así, estar arriba de lo esperado implica necesariamente proyectar arriba del 100%.
-  // Antes se usaba una tasa diaria promedio (ventas / día actual * días totales) que no
-  // guardaba relación directa con "lo esperado" y podía dar resultados contradictorios
-  // (ej: ir arriba del ritmo esperado pero proyectar un cierre por debajo del objetivo).
   const currentDailyRate = currentWorkingDay > 0 ? sales / currentWorkingDay : 0;
   const linearProjection = Math.round(currentDailyRate * totalWorkingDays);
   const performanceRatio = expectedSalesToDate > 0 ? sales / expectedSalesToDate : null;
@@ -184,8 +214,28 @@ export const calculateGlobalMetrics = (
   const remainingDays = Math.max(1, totalWorkingDays - currentWorkingDay);
 
   const completionPercent = effectiveGlobalTarget > 0 ? (totalSales / effectiveGlobalTarget) * 100 : 0;
-  const expectedPercent = totalWorkingDays > 0 ? (currentWorkingDay / totalWorkingDays) * 100 : 0;
-  const expectedSalesToDate = (effectiveGlobalTarget * expectedPercent) / 100;
+
+  const baseDailyTarget = totalWorkingDays > 0 ? Math.round(effectiveGlobalTarget / totalWorkingDays) : 0;
+
+  // Objetivo Sábado de la sede (Objetivo Diario Sábados) — se necesita antes de calcular
+  // "lo esperado", porque el reparto día por día usa este valor para los sábados.
+  const saturdayTargetSede = saturdayBranchTarget && saturdayBranchTarget > 0
+    ? saturdayBranchTarget
+    : (sellersSaturdaySum > 0 ? sellersSaturdaySum : Math.round(baseDailyTarget * 0.6));
+
+  const weekdayTargetForExpected = customDailyTarget && customDailyTarget > 0 ? customDailyTarget : baseDailyTarget;
+
+  // Venta esperada a la fecha — sumando día por día (sábados y anulaciones manuales
+  // incluidas), igual que la grilla de "Vista Rápida", para que ambas pantallas coincidan.
+  const expectedSalesToDate = calculateWeightedExpected(
+    year,
+    month,
+    currentWorkingDay,
+    weekdayTargetForExpected,
+    saturdayTargetSede,
+    config.dailyTargetOverrides
+  );
+  const expectedPercent = effectiveGlobalTarget > 0 ? (expectedSalesToDate / effectiveGlobalTarget) * 100 : 0;
 
   const pacingVarianceAmount = totalSales - expectedSalesToDate;
   const pacingVariancePercent = completionPercent - expectedPercent;
@@ -193,8 +243,6 @@ export const calculateGlobalMetrics = (
 
   const diffTotalTarget = totalSales - effectiveGlobalTarget;
   const isTargetSurpassed = totalSales >= effectiveGlobalTarget;
-
-  const baseDailyTarget = totalWorkingDays > 0 ? Math.round(effectiveGlobalTarget / totalWorkingDays) : 0;
 
   // Objetivos de sede al 100% y al 140%
   const globalTarget140 = Math.round(effectiveGlobalTarget * 1.4);
@@ -204,11 +252,6 @@ export const calculateGlobalMetrics = (
   const dailyTargetSede140 = totalSales >= globalTarget140
     ? 0
     : Math.max(0, Math.round((globalTarget140 - totalSales) / remainingDays));
-
-  // Objetivo Sábado de la sede (Objetivo Diario Sábados)
-  const saturdayTargetSede = saturdayBranchTarget && saturdayBranchTarget > 0
-    ? saturdayBranchTarget
-    : (sellersSaturdaySum > 0 ? sellersSaturdaySum : Math.round(baseDailyTarget * 0.6));
 
   // Objetivo Diario Efectivo de la Sede
   const currentDayOverride = config.dailyTargetOverrides?.[currentWorkingDay];
@@ -234,8 +277,8 @@ export const calculateGlobalMetrics = (
   const isTodaySedePositive = todaySedeVariance >= 0;
 
   // Proyección de cierre de mes: se escala el objetivo total por el % de cumplimiento
-  // respecto de lo esperado a la fecha (mismo criterio que "Vista Rápida" y que cada
-  // vendedor individual). Antes se usaba una tasa diaria promedio que no guardaba relación
+  // respecto de lo esperado a la fecha (ya calculado día por día arriba, igual que en
+  // "Vista Rápida"). Antes se usaba una tasa diaria promedio que no guardaba relación
   // directa con "lo esperado" y podía mostrar, por ejemplo, "arriba de lo esperado" junto
   // con una proyección de cierre por debajo del 100% del objetivo — una contradicción.
   const currentDailyRate = currentWorkingDay > 0 ? totalSales / currentWorkingDay : 0;
