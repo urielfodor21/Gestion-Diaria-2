@@ -55,6 +55,13 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
   const [sellers, setSellers] = useState<Seller[]>([]);
   const remoteUpdateRef = useRef(false);
 
+  // A qué sede pertenecen REALMENTE los `config`/`sellers` que hay en memoria en este momento.
+  // Es la clave del blindaje: mientras cambia de sede, `currentSedeId` puede actualizarse
+  // un instante antes de que termine de llegar el fetch de la sede nueva, y sin esta
+  // referencia el efecto de sincronización de mes (y el autosave) podían operar con el
+  // `config`/`sellers` de la sede ANTERIOR pero guardando bajo el id de la sede NUEVA.
+  const loadedSedeIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!currentSedeId) return;
     let active = true;
@@ -63,6 +70,7 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
       .then((state) => {
         if (!active || !state) return;
         remoteUpdateRef.current = true;
+        loadedSedeIdRef.current = currentSedeId;
         setConfig(state.config);
         setSellers(state.sellers);
         setSelectedDay(state.config.currentWorkingDay);
@@ -71,6 +79,7 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
 
     const unsubscribe = subscribeToSede(currentSedeId, (state) => {
       remoteUpdateRef.current = true;
+      loadedSedeIdRef.current = currentSedeId;
       setConfig(state.config);
       setSellers(state.sellers);
     });
@@ -87,7 +96,33 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
   // conservando los objetivos de cada vendedor (solo se reinician las ventas cargadas).
   useEffect(() => {
     if (!config || !currentSedeId) return;
+
+    // Blindaje 1: nunca operar sobre datos que todavía pertenecen a la sede anterior
+    // (evita archivar/resetear una sede usando el estado de otra, al cambiar de sede).
+    if (loadedSedeIdRef.current !== currentSedeId) return;
+    if (sedeLoading) return;
+
     const auto = getAutoPeriodInfo();
+
+    // Blindaje 2: sede sin período cargado todavía (dato legado o recién creada).
+    // Adoptamos el período actual SIN archivar ni resetear ventas, para no borrar
+    // nada por error solo porque falten estos campos.
+    if (!config.calendarYear || !config.calendarMonth) {
+      setConfig((prev) =>
+        prev
+          ? {
+              ...prev,
+              calendarYear: auto.year,
+              calendarMonth: auto.month,
+              periodName: auto.periodName,
+              totalWorkingDays: auto.totalWorkingDays,
+              currentWorkingDay: auto.day,
+            }
+          : prev
+      );
+      return;
+    }
+
     const sameMonth = config.calendarYear === auto.year && config.calendarMonth === auto.month;
 
     if (sameMonth) {
@@ -97,12 +132,26 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
       return;
     }
 
+    // Blindaje 3: solo avanzar de mes hacia adelante. Si por un reloj desincronizado o
+    // un dato corrupto el mes "automático" quedara ANTES del mes guardado, no tocar nada
+    // (evita un archivado/reseteo espurio).
+    const configIsAfterAuto =
+      config.calendarYear > auto.year || (config.calendarYear === auto.year && config.calendarMonth > auto.month);
+    if (configIsAfterAuto) return;
+
+    const sedeIdAtStart = currentSedeId;
+
     (async () => {
       try {
-        await archiveSedeMonth(currentSedeId, config, sellers);
+        await archiveSedeMonth(sedeIdAtStart, config, sellers);
       } catch (err) {
         console.error('No se pudo archivar el mes anterior en el histórico', err);
       }
+
+      // Blindaje 4: si mientras se archivaba el usuario cambió de sede, no tocar el
+      // estado local — ya pertenece a otra sede que se está cargando/guardando por su cuenta.
+      if (loadedSedeIdRef.current !== sedeIdAtStart) return;
+
       const resetSellers = sellers.map((s) => ({
         ...s,
         currentSales: 0,
@@ -131,7 +180,7 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
       );
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config?.calendarYear, config?.calendarMonth, currentSedeId]);
+  }, [config?.calendarYear, config?.calendarMonth, currentSedeId, sedeLoading]);
 
   // Guardar en Supabase cuando config/sellers cambian LOCALMENTE (no por eco de Realtime)
   const [saveError, setSaveError] = useState(false);
@@ -141,6 +190,10 @@ const AuthenticatedApp: React.FC<{ profile: NonNullable<ReturnType<typeof useAut
       remoteUpdateRef.current = false;
       return;
     }
+    // Blindaje extra: nunca guardar si el estado en memoria no pertenece (todavía) a la
+    // sede activa — corta cualquier resto de la condición de carrera de cambio de sede.
+    if (loadedSedeIdRef.current !== currentSedeId) return;
+
     const t = setTimeout(() => {
       saveSede(currentSedeId, config, sellers)
         .then(() => setSaveError(false))
